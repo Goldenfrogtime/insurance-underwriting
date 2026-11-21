@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: coverflow-uat
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /api/v1/health
+    disk:
+      name: coverflow-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "4001"
+      - key: DATABASE_URL
+        value: "file:/data/coverflow.db"
+      - key: UAT_ADMIN_EMAIL
+        value: "your-admin-email@gmail.com"
+      - key: UAT_ADMIN_PASSCODE
+        generateValue: true
+      - key: UAT_BROKER_CODE
+        value: "COVERFLOW-UAT"

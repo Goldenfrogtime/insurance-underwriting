@@ -1,0 +1,31 @@
+{
+  "name": "@coverflow/api",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:seed": "tsx src/seed.ts"
+  },
+  "dependencies": {
+    "@coverflow/adapters": "0.1.0",
+    "@coverflow/domain": "0.1.0",
+    "@fastify/cors": "^10.0.2",
+    "@prisma/client": "^6.3.1",
+    "fastify": "^5.2.1",
+    "pdfkit": "^0.16.0",
+    "qrcode": "^1.5.4",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "@types/pdfkit": "^0.13.8",
+    "@types/qrcode": "^1.5.5",
+    "prisma": "^6.3.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

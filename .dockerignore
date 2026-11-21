@@ -1,0 +1,8 @@
+node_modules
+**/node_modules
+**/dist
+apps/api/prisma/*.db
+apps/api/prisma/*.db-journal
+apps/api/.env
+.git
+.DS_Store

@@ -1,0 +1,300 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id           String   @id @default(cuid())
+  fullName     String
+  customerType String   @default("INDIVIDUAL") // INDIVIDUAL | CORPORATE
+  idType       String?  // NIDA | TIN | PASSPORT
+  idNumber     String?
+  tinNumber    String?
+  phone        String
+  email        String?
+  dateOfBirth  String?
+  gender       String?
+  nationality  String   @default("Tanzania")
+  region       String?
+  district     String?
+  address      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  quotes   Quote[]
+  policies Policy[]
+}
+
+model Vehicle {
+  id                  String   @id @default(cuid())
+  normalizedPlate     String   @unique
+  enteredPlate        String
+  chassisNo           String
+  engineNo            String
+  make                String
+  model               String
+  modelNumber         String?
+  bodyType            String
+  manufactureYear     Int
+  fuelType            String
+  color               String
+  cc                  Int
+  seats               Int
+  grossWeightKg       Float
+  tareWeightKg        Float
+  axles               Int      @default(2)
+  registeredOwnerName String
+  registeredUsage     String
+  suggestedClass      String
+  source              String   @default("TRA_MOCK")
+  traFetchedAt        DateTime @default(now())
+  traRawSnapshot      String   // JSON string
+
+  quoteItems QuoteItem[]
+  policies   Policy[]
+}
+
+model Quote {
+  id                         String   @id @default(cuid())
+  quoteNumber                String   @unique
+  channel                    String   @default("BROKER") // BROKER | CLIENT_APP
+  brokerName                 String?
+  insurerCode                String
+  status                     String   @default("DRAFT") // PolicyState
+  activeVersion              Int      @default(1)
+  currency                   String   @default("TZS")
+  totalNetPremiumTzs         Int      @default(0)
+  totalVatTzs                Int      @default(0)
+  totalPayableTzs            Int      @default(0)
+  totalBrokerCommissionTzs   Int      @default(0)
+  totalVatOnCommissionTzs    Int      @default(0)
+  totalInsurerSettlementTzs  Int      @default(0)
+
+  customerId                 String?
+  customer                   Customer? @relation(fields: [customerId], references: [id])
+  ownerRelationship          String?   // REGISTERED_OWNER | AUTHORIZED_DRIVER | CORPORATE_REPRESENTATIVE | FINANCED
+  ownerRelationshipConfirmed Boolean   @default(false)
+  firstLossPayee             String?
+
+  proposalAccepted           Boolean   @default(false)
+  proposalSignedBy           String?
+  proposalSignedAt           DateTime?
+  proposalBrokerCountersign  String?
+
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  items            QuoteItem[]
+  payments         PaymentTransaction[]
+  preCoverPhotos   PreCoverPhoto[]
+  policies         Policy[]
+  tiraLogs         TiraTransmissionLog[]
+  auditEvents      AuditEvent[]
+}
+
+model QuoteItem {
+  id                       String   @id @default(cuid())
+  quoteId                  String
+  quote                    Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  version                  Int      @default(1)
+  isActive                 Boolean  @default(true)
+
+  vehicleId                String
+  vehicle                  Vehicle  @relation(fields: [vehicleId], references: [id])
+
+  vehicleClass             String
+  actualUse                String
+  coverType                String   // COMPREHENSIVE | TPFT | TPO
+  duration                 String   @default("ANNUAL_12M")
+  startDate                String   // YYYY-MM-DD
+  endDate                  String   // YYYY-MM-DD
+  sumInsuredTzs            Int      @default(0)
+  seatCount                Int?
+  tonnageBand              String?
+  carriesPassengers2W3W    Boolean  @default(false)
+  claimsFreeStatus         String   @default("SELF_DECLARED_CLAIMS_FREE")
+  claimsDeclaredAt         DateTime @default(now())
+
+  addOnsJson               String   @default("{}")
+  discountsJson            String   @default("{}")
+  activeCoverJson          String   @default("{}")
+  calculationResultJson    String   @default("{}")
+
+  ruleVersion              String
+  netPremiumTzs            Int      @default(0)
+  vatAmountTzs             Int      @default(0)
+  totalPayableTzs          Int      @default(0)
+  referralRequired         Boolean  @default(false)
+  referralApproved         Boolean  @default(false)
+
+  createdAt                DateTime @default(now())
+
+  corrections VehicleCorrection[]
+}
+
+model VehicleCorrection {
+  id               String    @id @default(cuid())
+  quoteItemId      String
+  quoteItem        QuoteItem @relation(fields: [quoteItemId], references: [id], onDelete: Cascade)
+  field            String    // vehicleClass | actualUse | seats | tonnageBand
+  fetchedValue     String
+  proposedValue    String
+  reason           String
+  evidenceFileName String?
+  proposedBy       String
+  proposedAt       DateTime  @default(now())
+  status           String    @default("PENDING_INSURER_ACCEPTANCE") // PENDING_INSURER_ACCEPTANCE | ACCEPTED | REJECTED
+  reviewedBy       String?
+  reviewedAt       DateTime?
+}
+
+model PreCoverPhoto {
+  id           String   @id @default(cuid())
+  quoteId      String
+  quote        Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  plate        String
+  angle        String   // FRONT | REAR | LEFT | RIGHT | ODOMETER | LOGBOOK
+  dataUrl      String
+  consentGiven Boolean  @default(true)
+  capturedAt   DateTime @default(now())
+}
+
+model PaymentTransaction {
+  id                String    @id @default(cuid())
+  quoteId           String
+  quote             Quote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  controlNumber     String    @unique
+  providerReference String
+  method            String    // MOBILE_MONEY | CONTROL_NUMBER_BANK | CARD | CORPORATE_CREDIT
+  amountTzs         Int
+  payerPhone        String?
+  state             String    @default("PENDING") // PaymentState
+  instructions      String
+  providerReceiptNo String?
+  statusMessage     String?
+  clearedAt         DateTime?
+  expiresAt         DateTime
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model Policy {
+  id                 String   @id @default(cuid())
+  policyNo           String   @unique
+  coverNoteNo        String   @unique
+  stickerNo          String   @unique
+  quoteId            String
+  quote              Quote    @relation(fields: [quoteId], references: [id])
+  vehicleId          String
+  vehicle            Vehicle  @relation(fields: [vehicleId], references: [id])
+  customerId         String
+  customer           Customer @relation(fields: [customerId], references: [id])
+  insurerCode        String
+  vehicleClass       String
+  coverType          String
+  duration           String
+  startDate          String
+  endDate            String
+  sumInsuredTzs      Int
+  netPremiumTzs      Int
+  vatAmountTzs       Int
+  totalPayableTzs    Int
+  excessJson         String
+  firstLossPayee     String?
+  claimsFreeStatus   String
+  status             String   @default("ISSUED") // ISSUED | DELIVERED | CANCELLED
+  issuedAt           DateTime @default(now())
+}
+
+model TiraTransmissionLog {
+  id                 String   @id @default(cuid())
+  quoteId            String
+  quote              Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  requestId          String
+  normalizedPlate    String
+  acknowledgmentId   String
+  tiraStatusCode     String
+  tiraStatusMessage  String
+  coverNoteNo        String?
+  stickerNo          String?
+  actionableNextStep String?
+  success            Boolean
+  createdAt          DateTime @default(now())
+}
+
+model ClaimsFeedbackRecord {
+  id              String   @id @default(cuid())
+  normalizedPlate String
+  policyNo        String?
+  claimFlowId     String   @unique
+  lossDate        String
+  claimStatus     String
+  verifiedAt      DateTime @default(now())
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  quoteId   String
+  quote     Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  actor     String
+  eventType String
+  fromState String?
+  toState   String?
+  details   String   // JSON string
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Broker UAT Access Control & In-App Remarks
+// ---------------------------------------------------------------------------
+model UatSettings {
+  id                String   @id @default("singleton")
+  testingOpen       Boolean  @default(true)
+  brokerAccessCode  String   @default("COVERFLOW-UAT")
+  adminPasscode     String   @default("ADMIN-2026")
+  sandboxBannerText String   @default("SANDBOX TEST ONLY — Mock TRA/TIRA data. Cover notes generated here are NOT valid for road use.")
+  updatedAt         DateTime @updatedAt
+}
+
+model AllowedTester {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  organization String?
+  role         String    @default("BROKER_TESTER") // ADMIN | BROKER_TESTER
+  active       Boolean   @default(true)
+  expiresAt    DateTime?
+  lastSeenAt   DateTime?
+  createdAt    DateTime  @default(now())
+}
+
+model UatSession {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  email     String
+  name      String
+  role      String   // ADMIN | BROKER_TESTER
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model BrokerRemark {
+  id           String   @id @default(cuid())
+  testerEmail  String
+  testerName   String
+  organization String?
+  category     String   // PRICING | MISSING_FIELD | CONFUSING_STEP | BUG | GREAT
+  rating       Int?     // 1-5
+  mode         String   // BROKER | CLIENT_APP
+  screen       String
+  quoteNumber  String?
+  plate        String?
+  comment      String
+  status       String   @default("NEW") // NEW | REVIEWED | RESOLVED
+  createdAt    DateTime @default(now())
+}
+
