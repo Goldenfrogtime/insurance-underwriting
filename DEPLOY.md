@@ -1,81 +1,65 @@
-# Deploying CoverFlow UAT on Google Cloud Run (\$0 Free Tier)
+# Deploying CoverFlow UAT (Always-On Gmail-Gated Link)
 
-CoverFlow packages the **Web App (Broker Portal + Client App)**, **Fastify API**, **PDF Generator**, **Gmail Allowlist Gate**, and **Broker Remarks System** into a single Cloud Run container.
-
-- **Compute:** Google Cloud Run Free Tier (**2M free requests/month**, scales to zero, wakes in ~2s, automatic HTTPS).
-- **Database:** Pair with **[Neon](https://neon.tech) Free PostgreSQL** (500 MB free forever, no credit card) so your broker remarks & Gmail allowlist persist permanently without paying for Google Cloud SQL (~\$10+/mo).
+CoverFlow packages the **Web App (Broker Portal + Client App)**, **Fastify API**, **PDF Generator**, **Gmail Allowlist Gate**, and **Broker Remarks System** into a single Docker container (`Dockerfile`, PostgreSQL-backed, binds `$PORT` / default `8080`).
 
 ---
 
-## Step 1: Create a Free PostgreSQL Database (60 seconds)
+## Required Environment Variables (All Hosts)
 
-1. Go to [neon.tech](https://neon.tech) (or [supabase.com](https://supabase.com)) → **Sign up with Google** → **Create Project** (`coverflow-uat`).
-2. Copy the PostgreSQL connection string (`DATABASE_URL`), which looks like:
-   ```
-   postgresql://user:password@ep-xxxxx.aws.neon.tech/neondb?sslmode=require
-   ```
+Set these 4 environment variables on your host (**never commit them to Git**):
 
----
+| Variable | Example Value | Purpose |
+| :--- | :--- | :--- |
+| `DATABASE_URL` | `postgresql://user:pass@host/neondb?sslmode=require` | PostgreSQL connection string (Neon Free Postgres or Railway Postgres) |
+| `UAT_ADMIN_EMAIL` | `yourname@gmail.com` | Your Admin Gmail (unlocks the **Admin & Remarks** tab) |
+| `UAT_ADMIN_PASSCODE` | `YourStrongPass2026` | Private Admin sign-in passcode |
+| `UAT_BROKER_CODE` | `COVERFLOW-UAT` | Shared broker invite passcode (rotatable anytime in Admin panel) |
 
-## Step 2: Deploy to Google Cloud Run
-
-### Method A — No CLI Needed (Google Cloud Console + GitHub)
-
-1. Push the `coverflow/` folder to a **private GitHub repository**.
-2. Open **[Google Cloud Console → Cloud Run](https://console.cloud.google.com/run)** → click **Deploy container → Service**.
-3. Choose **Continuously deploy from a repository (Source)** → click **Set up with Cloud Build** → connect your GitHub repo (`Dockerfile` is auto-detected at `/Dockerfile`).
-4. Configure Service Settings:
-   - **Service name:** `coverflow-uat`
-   - **Region:** `europe-west1` or `africa-south1` (Johannesburg — lowest latency for East Africa!)
-   - **Authentication:** Select **Allow unauthenticated invocations** *(CoverFlow's own server-side Gmail Allowlist Gate protects the app, or you can enable Cloud Run IAP on top for Google SSO).*
-   - **Container port:** `8080`
-   - **Memory:** `512 MiB` · **Min instances:** `0` (keeps it \$0!) · **Max instances:** `2`
-5. Expand **Variables & Secrets → Environment Variables** and add:
-   - `DATABASE_URL` = *(your Neon PostgreSQL connection string)*
-   - `UAT_ADMIN_EMAIL` = `yourname@gmail.com` *(your Gmail — becomes Admin)*
-   - `UAT_ADMIN_PASSCODE` = `YourStrongAdminPass2026` *(keep private)*
-   - `UAT_BROKER_CODE` = `COVERFLOW-UAT` *(share with approved brokers; rotatable anytime in-app)*
-6. Click **Create** — in ~2 minutes Cloud Run gives you an HTTPS URL like:
-   `https://coverflow-uat-xxxxx.a.run.app`
+*(Optional: Set `GOOGLE_CLIENT_ID` if you later enable 1-click Google Sign-In.)*
 
 ---
 
-### Method B — 1-Command Deploy via `gcloud` CLI (Optional)
+## Option 1: Railway (Recommended — Fastest, Zero Cold-Starts)
 
-If you install Google Cloud SDK (`brew install --cask google-cloud-sdk`):
-
-```bash
-gcloud auth login
-gcloud config set project YOUR_GCP_PROJECT_ID
-
-cd "/Users/barakaituwe/Documents/antigravity/insurance underwriting/coverflow"
-
-gcloud run deploy coverflow-uat \
-  --source . \
-  --region africa-south1 \
-  --allow-unauthenticated \
-  --port 8080 \
-  --memory 512Mi \
-  --min-instances 0 \
-  --max-instances 2 \
-  --set-env-vars "DATABASE_URL=YOUR_NEON_POSTGRES_URL,UAT_ADMIN_EMAIL=yourname@gmail.com,UAT_ADMIN_PASSCODE=YourStrongAdminPass2026,UAT_BROKER_CODE=COVERFLOW-UAT"
-```
+1. Go to **[railway.com/dashboard](https://railway.com/dashboard)** → **New Project → Deploy from GitHub Repo** → select `Goldenfrogtime/insurance-underwriting`.
+2. Railway automatically detects `Dockerfile` and starts building.
+3. Add a PostgreSQL database:
+   - Either paste your **Neon PostgreSQL** `DATABASE_URL` into Railway **Variables**, **or** click **+ New → Database → Add PostgreSQL** inside Railway and reference `${{Postgres.DATABASE_URL}}`.
+4. In your CoverFlow service → **Variables**, add:
+   - `DATABASE_URL`
+   - `UAT_ADMIN_EMAIL`
+   - `UAT_ADMIN_PASSCODE`
+   - `UAT_BROKER_CODE`
+   - `PORT` = `8080`
+5. Go to **Settings → Networking → Generate Domain** → your live HTTPS URL is ready (e.g. `https://insurance-underwriting-production.up.railway.app`).
 
 ---
 
-## Step 3: Onboard & Control Brokers
+## Option 2: Render (Free Tier + Neon Postgres)
 
-1. Open your Cloud Run HTTPS URL and sign in with `UAT_ADMIN_EMAIL` + `UAT_ADMIN_PASSCODE`.
-2. Go to the **Admin & Remarks** tab (hidden from brokers):
+1. Go to **[dashboard.render.com](https://dashboard.render.com)** → **New → Web Service** → connect `Goldenfrogtime/insurance-underwriting`.
+2. Choose **Runtime: Docker**, **Instance Type: Free**, and add the 4 environment variables above (using your Neon PostgreSQL `DATABASE_URL`).
+3. Click **Create Web Service**. *(Note: Render Free sleeps after 15 mins idle and wakes in ~30–50s on the first click.)*
+
+---
+
+## Option 3: Google Cloud Run (Free Tier — 2M reqs/mo)
+
+1. Open **[Google Cloud Console → Cloud Run](https://console.cloud.google.com/run)** with a billing-enabled project.
+2. Click **Deploy container → Service → Continuously deploy from a repository** → connect `Goldenfrogtime/insurance-underwriting` (`^main$`, `/Dockerfile`).
+3. Set **Region** (`africa-south1` or `europe-west1`), **Port** `8080`, **Memory** `512 MiB`, **Min instances** `0`, **Allow unauthenticated invocations**, and add the 4 environment variables above.
+4. Click **Create**.
+
+---
+
+## Post-Deploy: Onboarding & Controlling Brokers
+
+1. Open your deployed HTTPS URL and sign in with `UAT_ADMIN_EMAIL` + `UAT_ADMIN_PASSCODE`.
+2. Open the **Admin & Remarks** tab (hidden from brokers):
    - Add each broker's **Gmail address**, name, brokerage, and optional expiry date.
-   - Click **Copy WhatsApp / Email Invite** and send it to them.
+   - Click **Copy WhatsApp / Email Invite** and share it with them.
 3. **Full Control at Any Time:**
-   - **Revoke 1 broker:** Click **Revoke** next to their Gmail (kills their active session immediately).
+   - **Revoke 1 broker:** Click **Revoke** next to their Gmail (immediately kills their active session).
    - **Pause everyone:** Click **Pause All Broker Access** (Master Kill-Switch).
+   - **Rotate passcode:** Update the Broker Access Code anytime.
    - **Export feedback:** Review remarks in-app or click **Export CSV**.
-
----
-
-## Optional Upgrade: 1-Click "Sign in with Google"
-
-CoverFlow's backend already supports verifying Google ID tokens! To enable Google SSO later, create an OAuth Client ID in Google Cloud Console (`APIs & Services → Credentials`) and set `GOOGLE_CLIENT_ID` as an env var on Cloud Run.
