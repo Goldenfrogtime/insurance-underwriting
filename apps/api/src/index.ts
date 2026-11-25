@@ -238,8 +238,11 @@ async function hydrateQuote(quoteId: string) {
       activeCover: activeCover.status ? activeCover : undefined,
       requiresPhotos:
         Boolean(insurer?.requiresPhotosForComprehensive) && item.coverType === 'COMPREHENSIVE',
-      photoCount: quote.preCoverPhotos.filter((p) => p.plate === item.vehicle.normalizedPlate)
-        .length,
+      photoCount: new Set(
+        quote.preCoverPhotos
+          .filter((p) => p.plate === item.vehicle.normalizedPlate)
+          .map((p) => p.angle),
+      ).size,
     });
     for (const b of res.blockers) {
       if (!allBlockers.includes(b)) allBlockers.push(b);
@@ -1199,8 +1202,19 @@ app.patch('/api/v1/quotes/:id/kyc-declaration', async (request, reply) => {
 });
 
 // ---------------------------------------------------------------------------
-// 8. Optional Pre-Cover Baseline Photos (ClaimFlow Handoff)
+// 8. Pre-Cover Baseline Inspection Photos (Real Uploads + Chassis/Engine)
 // ---------------------------------------------------------------------------
+const PhotoAngleSchema = z.enum([
+  'FRONT',
+  'REAR',
+  'LEFT',
+  'RIGHT',
+  'CHASSIS_VIN',
+  'ENGINE_NO',
+  'ODOMETER',
+  'LOGBOOK',
+]);
+
 app.post('/api/v1/quotes/:id/photos', async (request, reply) => {
   const user = request.uatUser!;
   const { id } = request.params as { id: string };
@@ -1215,31 +1229,92 @@ app.post('/api/v1/quotes/:id/photos', async (request, reply) => {
   }
   const schema = z.object({
     plate: z.string().min(2),
-    angle: z.enum(['FRONT', 'REAR', 'LEFT', 'RIGHT', 'ODOMETER', 'LOGBOOK']),
-    dataUrl: z.string().min(10),
+    angle: PhotoAngleSchema,
+    dataUrl: z
+      .string()
+      .min(20)
+      .max(4 * 1024 * 1024, 'Photo is too large. Please upload an image under 3 MB.')
+      .refine((v) => v.startsWith('data:image/'), 'Only image uploads (JPG, PNG, WebP) are allowed.'),
     consentGiven: z.boolean().default(true),
   });
   const parsed = schema.safeParse(request.body);
-  if (!parsed.success) return reply.code(400).send({ error: 'Invalid photo payload' });
+  if (!parsed.success) {
+    return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid photo payload' });
+  }
 
-  const photo = await prisma.preCoverPhoto.create({
-    data: {
-      quoteId: id,
-      plate: normalizePlate(parsed.data.plate),
-      angle: parsed.data.angle,
-      dataUrl: parsed.data.dataUrl,
-      consentGiven: parsed.data.consentGiven,
-    },
+  const normalizedPlate = normalizePlate(parsed.data.plate);
+
+  // Replace existing photo for the same quote + plate + angle so retakes stay clean
+  const existing = await prisma.preCoverPhoto.findFirst({
+    where: { quoteId: id, plate: normalizedPlate, angle: parsed.data.angle },
   });
+
+  const photo = existing
+    ? await prisma.preCoverPhoto.update({
+        where: { id: existing.id },
+        data: {
+          dataUrl: parsed.data.dataUrl,
+          consentGiven: parsed.data.consentGiven,
+          capturedAt: new Date(),
+        },
+      })
+    : await prisma.preCoverPhoto.create({
+        data: {
+          quoteId: id,
+          plate: normalizedPlate,
+          angle: parsed.data.angle,
+          dataUrl: parsed.data.dataUrl,
+          consentGiven: parsed.data.consentGiven,
+        },
+      });
 
   await recordAudit({
     quoteId: id,
-    actor: 'User',
-    eventType: 'PRE_COVER_PHOTO_UPLOADED',
+    actor: user.email,
+    eventType: existing ? 'PRE_COVER_PHOTO_REPLACED' : 'PRE_COVER_PHOTO_UPLOADED',
     details: { photoId: photo.id, angle: photo.angle, plate: photo.plate },
   });
 
-  return hydrateQuote(id);
+  const hydrated = await hydrateQuote(id);
+  if (hydrated?.readiness.issueReady && quoteCheck.status === 'QUOTED') {
+    await prisma.quote.update({ where: { id }, data: { status: 'ISSUE_READY' } });
+    hydrated.status = 'ISSUE_READY';
+    hydrated.statusLabel = formatPolicyStatusLabel('ISSUE_READY');
+  }
+
+  return sanitizeQuoteForScope(hydrated!, scope);
+});
+
+app.delete('/api/v1/quotes/:id/photos/:photoId', async (request, reply) => {
+  const user = request.uatUser!;
+  const { id, photoId } = request.params as { id: string; photoId: string };
+  const quoteCheck = await prisma.quote.findUnique({ where: { id }, include: { customer: true } });
+  if (!quoteCheck) return reply.code(404).send({ error: 'Quote not found' });
+  const scope = resolveEffectiveScope(
+    user,
+    quoteCheck.channel === 'CLIENT_APP' ? 'client' : 'broker',
+  );
+  if (!canAccessQuoteRecord(quoteCheck, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to this quotation.' });
+  }
+
+  const photo = await prisma.preCoverPhoto.findFirst({
+    where: { id: photoId, quoteId: id },
+  });
+  if (!photo) return reply.code(404).send({ error: 'Photo not found' });
+
+  await Promise.all([
+    prisma.preCoverPhoto.delete({ where: { id: photoId } }),
+    recordAudit({
+      quoteId: id,
+      actor: user.email,
+      eventType: 'PRE_COVER_PHOTO_REMOVED',
+      details: { photoId: photo.id, angle: photo.angle, plate: photo.plate },
+    }),
+  ]);
+
+  const hydrated = await hydrateQuote(id);
+  return sanitizeQuoteForScope(hydrated!, scope);
 });
 
 // ---------------------------------------------------------------------------

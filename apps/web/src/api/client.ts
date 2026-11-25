@@ -353,6 +353,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  deletePhoto: (quoteId: string, photoId: string) =>
+    apiFetch<HydratedQuote>(`/quotes/${quoteId}/photos/${photoId}`, {
+      method: 'DELETE',
+    }),
   initiatePayment: (
     quoteId: string,
     payload: {

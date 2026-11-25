@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   ArrowRight,
   Building2,
-  Camera,
   Car,
   Check,
   CheckCircle2,
@@ -41,6 +40,7 @@ import {
 } from '../api/client';
 import { StickerCard } from './StickerCard';
 import { PaymentPanel } from './PaymentPanel';
+import { InspectionPhotosPanel } from './InspectionPhotosPanel';
 
 interface UnderwritingWizardProps {
   mode: 'BROKER' | 'CLIENT_APP';
@@ -57,12 +57,6 @@ const STEPS = [
   { num: 3, title: 'KYC & Payment', subtitle: 'Control No. & Pay' },
   { num: 4, title: 'TIRA Sticker', subtitle: 'Bind & Deliver' },
 ] as const;
-
-// Tiny SVG placeholder image as base64 dataUrl for 1-click demo photo upload
-function makeDemoPhotoDataUrl(plate: string, angle: string): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="420" height="240" viewBox="0 0 420 240"><rect width="420" height="240" fill="#0f172a"/><rect x="16" y="16" width="388" height="208" rx="14" fill="#1e293b" stroke="#38bdf8" stroke-width="2"/><text x="34" y="64" fill="#38bdf8" font-family="sans-serif" font-size="14" font-weight="bold">COVERFLOW BASELINE INSPECTION</text><text x="34" y="112" fill="#ffffff" font-family="monospace" font-size="28" font-weight="bold">${plate} · ${angle}</text><text x="34" y="152" fill="#94a3b8" font-family="sans-serif" font-size="13">Timestamp: ${new Date().toISOString()}</text><text x="34" y="182" fill="#34d399" font-family="sans-serif" font-size="12">Stored with consent for ClaimFlow FNOL baseline</text></svg>`;
-  return `data:image/svg+xml;base64,${btoa(svg)}`;
-}
 
 export function UnderwritingWizard({
   mode,
@@ -539,24 +533,6 @@ export function UnderwritingWizard({
       setStatusNotice('KYC & digital AML/CFT proposal saved.');
     } catch (err) {
       setActionError((err as Error).message);
-    } finally {
-      setActionBusy(false);
-    }
-  };
-
-  // Attach baseline photo
-  const handleAttachDemoPhoto = async (plate: string, angle: string) => {
-    if (!quote) return;
-    setActionBusy(true);
-    try {
-      const updated = await api.uploadPhoto(quote.id, {
-        plate,
-        angle,
-        dataUrl: makeDemoPhotoDataUrl(plate, angle),
-        consentGiven: true,
-      });
-      setQuote(updated);
-      setStatusNotice(`Saved timestamped ${angle} baseline photo for ClaimFlow.`);
     } finally {
       setActionBusy(false);
     }
@@ -2158,55 +2134,17 @@ export function UnderwritingWizard({
               </button>
             </form>
 
-            {/* Optional Pre-Cover Baseline Photos (ClaimFlow Handoff) */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="flex items-center gap-2 text-base font-bold text-slate-900">
-                    <Camera className="h-5 w-5 text-sky-600" aria-hidden="true" />
-                    Pre-Cover Baseline Photos (ClaimFlow Handoff)
-                  </h3>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    Optional for quote & standard MUA bind (required by Sanlam Allianz Comprehensive). Stored timestamped with consent for ClaimFlow FNOL.
-                  </p>
-                </div>
-                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">
-                  {quote.preCoverPhotos.length} / 4 captured
-                </span>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                {(['FRONT', 'REAR', 'LEFT', 'RIGHT'] as const).map((angle) => {
-                  const plate = quote.items[0]?.vehicle.normalizedPlate ?? '';
-                  const existing = quote.preCoverPhotos.find(
-                    (p) => p.angle === angle && p.plate === plate,
-                  );
-                  return (
-                    <button
-                      key={angle}
-                      type="button"
-                      disabled={actionBusy}
-                      onClick={() => handleAttachDemoPhoto(plate, angle)}
-                      className={`flex flex-col items-center justify-center rounded-xl border p-3 text-xs font-semibold transition ${
-                        existing
-                          ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
-                          : 'border-dashed border-slate-300 bg-slate-50 text-slate-600 hover:border-sky-400 hover:bg-sky-50'
-                      }`}
-                    >
-                      {existing ? (
-                        <CheckCircle2 className="mb-1 h-5 w-5 text-emerald-600" aria-hidden="true" />
-                      ) : (
-                        <Camera className="mb-1 h-5 w-5 text-slate-400" aria-hidden="true" />
-                      )}
-                      {angle}
-                      <span className="mt-0.5 text-[10px] font-normal">
-                        {existing ? 'Captured' : 'Tap to capture'}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            {/* Real Vehicle Inspection Photo Uploads (4 Views + Chassis/VIN & Engine No.) */}
+            <InspectionPhotosPanel
+              quote={quote}
+              actionBusy={actionBusy}
+              onQuoteUpdated={(updatedQuote, notice) => {
+                setActionError(null);
+                setQuote(updatedQuote);
+                setStatusNotice(notice);
+              }}
+              onError={(msg) => setActionError(msg)}
+            />
           </div>
 
           {/* Right 5 columns: Issue Readiness Gate + Control Number Payment & Bind */}

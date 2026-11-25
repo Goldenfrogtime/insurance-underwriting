@@ -195,6 +195,31 @@ export function EcosystemBridgeView({ initialPlate = '' }: EcosystemBridgeViewPr
                   </div>
                 </div>
 
+                {result.preCoverPhotos && result.preCoverPhotos.length > 0 && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Captured Pre-Cover Inspection Photos ({result.preCoverPhotos.length})
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+                      {result.preCoverPhotos.map((ph) => (
+                        <div
+                          key={ph.id}
+                          className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
+                        >
+                          <img
+                            src={ph.url}
+                            alt={`${result.vehicle?.normalizedPlate ?? 'Vehicle'} ${ph.angle}`}
+                            className="h-20 w-full object-cover bg-slate-900"
+                          />
+                          <div className="px-2 py-1 text-[10px] font-bold text-slate-700">
+                            {ph.angle.replace('_', ' ')}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-xs text-slate-600">
                     <strong>Test Bi-Directional Feedback Loop:</strong> Simulate ClaimFlow reporting a

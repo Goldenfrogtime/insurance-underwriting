@@ -159,7 +159,7 @@ model PreCoverPhoto {
   quoteId      String
   quote        Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
   plate        String
-  angle        String   // FRONT | REAR | LEFT | RIGHT | ODOMETER | LOGBOOK
+  angle        String   // FRONT | REAR | LEFT | RIGHT | CHASSIS_VIN | ENGINE_NO | ODOMETER | LOGBOOK
   dataUrl      String
   consentGiven Boolean  @default(true)
   capturedAt   DateTime @default(now())
