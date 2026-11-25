@@ -155,7 +155,7 @@ export function RemarksDrawer({
                           name="remarkCategory"
                           checked={category === c.id}
                           onChange={() => setCategory(c.id)}
-                          className="visually-hidden"
+                          className="sr-only"
                         />
                         {c.label}
                       </label>

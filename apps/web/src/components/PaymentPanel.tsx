@@ -131,7 +131,9 @@ export function PaymentPanel({
   const [proofDataUrl, setProofDataUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [slipError, setSlipError] = useState<string | null>(null);
   const activePaymentCardRef = useRef<HTMLDivElement>(null);
+  const slipInputRef = useRef<HTMLInputElement>(null);
 
   const latestPayment = quote.payments[0];
   const isBusy = busy || actionBusy;
@@ -142,16 +144,27 @@ export function PaymentPanel({
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  const handleFilePicked = (file: File | null) => {
+  const handleFilePicked = (file: File | null, inputEl?: HTMLInputElement | null) => {
+    setSlipError(null);
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) {
-      onError('Deposit slip file must be under 5 MB.');
+      const msg = 'Deposit slip file must be under 5 MB.';
+      setSlipError(msg);
+      onError(msg);
+      if (inputEl) inputEl.value = '';
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
       setProofFileName(file.name);
       setProofDataUrl(String(reader.result || ''));
+      if (inputEl) inputEl.value = '';
+    };
+    reader.onerror = () => {
+      const msg = 'Could not read the selected deposit slip file.';
+      setSlipError(msg);
+      onError(msg);
+      if (inputEl) inputEl.value = '';
     };
     reader.readAsDataURL(file);
   };
@@ -459,23 +472,30 @@ export function PaymentPanel({
             </div>
 
             <div>
-              <label htmlFor="bank-slip-file" className="block text-xs font-semibold text-slate-800">
+              <div className="block text-xs font-semibold text-slate-800">
                 Upload Bank Deposit Slip / Receipt (Photo or PDF)
-              </label>
-              <label
-                htmlFor="bank-slip-file"
-                className="mt-1 flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-emerald-300 bg-white px-4 py-3 text-xs font-semibold text-emerald-900 hover:bg-emerald-50"
+              </div>
+              <button
+                type="button"
+                onClick={() => slipInputRef.current?.click()}
+                className="mt-1 flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-emerald-300 bg-white px-4 py-3 text-xs font-semibold text-emerald-900 hover:bg-emerald-50"
               >
                 <Upload className="h-4 w-4 text-emerald-600" aria-hidden="true" />
                 {proofFileName ? `Attached: ${proofFileName}` : 'Choose photo or PDF receipt (max 5 MB)'}
-              </label>
+              </button>
               <input
+                ref={slipInputRef}
                 id="bank-slip-file"
                 type="file"
                 accept=".pdf,application/pdf,image/*"
-                onChange={(e) => handleFilePicked(e.target.files?.[0] ?? null)}
+                onChange={(e) => handleFilePicked(e.target.files?.[0] ?? null, e.target)}
                 className="hidden"
               />
+              {slipError && (
+                <div className="mt-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-800">
+                  {slipError}
+                </div>
+              )}
               {proofDataUrl && proofDataUrl.startsWith('data:image/') && (
                 <img
                   src={proofDataUrl}
