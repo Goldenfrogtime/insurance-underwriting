@@ -1,18 +1,21 @@
 import { useEffect, useState } from 'react';
 import {
   ArrowRight,
+  Building2,
   FileText,
+  Lock,
   RefreshCw,
   ShieldCheck,
   Wallet,
 } from 'lucide-react';
-import { api, formatTzs, type HydratedQuote } from '../api/client';
+import { api, formatTzs, type HydratedQuote, type UatUser } from '../api/client';
 import { StickerCard } from './StickerCard';
 
 interface QuotesPoliciesViewProps {
   mode: 'BROKER' | 'CLIENT_APP';
+  user: UatUser;
   onResumeQuote: (quoteId: string) => void;
-  onVerifyInEcosystem: (plate: string) => void;
+  onVerifyInEcosystem?: (plate: string) => void;
   onStartNew: () => void;
 }
 
@@ -30,10 +33,12 @@ const STATUS_BADGE: Record<string, string> = {
 
 export function QuotesPoliciesView({
   mode,
+  user,
   onResumeQuote,
   onVerifyInEcosystem,
   onStartNew,
 }: QuotesPoliciesViewProps) {
+  const scope: 'client' | 'broker' = mode === 'CLIENT_APP' ? 'client' : 'broker';
   const [quotes, setQuotes] = useState<HydratedQuote[]>([]);
   const [policies, setPolicies] = useState<Awaited<ReturnType<typeof api.listPolicies>>['policies']>(
     [],
@@ -46,7 +51,7 @@ export function QuotesPoliciesView({
   const load = async () => {
     setLoading(true);
     try {
-      const [qRes, pRes] = await Promise.all([api.listQuotes(), api.listPolicies()]);
+      const [qRes, pRes] = await Promise.all([api.listQuotes(scope), api.listPolicies(scope)]);
       setQuotes(qRes.quotes);
       setPolicies(pRes.policies);
     } finally {
@@ -55,8 +60,10 @@ export function QuotesPoliciesView({
   };
 
   useEffect(() => {
+    setSubTab(mode === 'CLIENT_APP' ? 'policies' : 'quotes');
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   return (
     <div className="space-y-6">
@@ -68,6 +75,22 @@ export function QuotesPoliciesView({
           <p className="text-sm text-slate-500">
             Strict separation between saved quotations and TIRA-verified issued cover notes.
           </p>
+          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+            {mode === 'CLIENT_APP' ? (
+              <>
+                <Lock className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+                Private Client View · Showing only covers belonging to{' '}
+                <span className="font-mono-code text-slate-900">{user.email}</span>
+              </>
+            ) : (
+              <>
+                <Building2 className="h-3.5 w-3.5 text-sky-600" aria-hidden="true" />
+                {user.role === 'ADMIN'
+                  ? 'Admin Oversight · Viewing all UAT brokerage records'
+                  : `Brokerage Workspace · Scoped to ${user.organization ?? user.email}`}
+              </>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -143,7 +166,7 @@ export function QuotesPoliciesView({
                   ...p,
                   insurerName: p.insurer?.name,
                 }}
-                onVerifyInEcosystem={onVerifyInEcosystem}
+                onVerifyInEcosystem={mode === 'BROKER' ? onVerifyInEcosystem : undefined}
               />
             ))}
           </div>
@@ -225,7 +248,7 @@ export function QuotesPoliciesView({
                     <td className="px-4 py-3.5 text-right">
                       <div className="inline-flex items-center gap-2">
                         <a
-                          href={`/api/v1/documents/quotes/${q.id}/quotation.pdf`}
+                          href={`/api/v1/documents/quotes/${q.id}/quotation.pdf?scope=${scope}`}
                           target="_blank"
                           rel="noreferrer"
                           className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
@@ -234,7 +257,7 @@ export function QuotesPoliciesView({
                         </a>
                         {mode === 'BROKER' && (
                           <a
-                            href={`/api/v1/documents/quotes/${q.id}/debit-note.pdf`}
+                            href={`/api/v1/documents/quotes/${q.id}/debit-note.pdf?scope=broker`}
                             target="_blank"
                             rel="noreferrer"
                             className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100"

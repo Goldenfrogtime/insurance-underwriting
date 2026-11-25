@@ -42,7 +42,7 @@ export interface UatUser {
   email: string;
   name: string;
   organization: string | null;
-  role: 'ADMIN' | 'BROKER_TESTER';
+  role: 'ADMIN' | 'BROKER_TESTER' | 'CLIENT_USER';
 }
 
 export interface AllowedTesterRecord {
@@ -50,7 +50,7 @@ export interface AllowedTesterRecord {
   email: string;
   name: string;
   organization: string | null;
-  role: 'ADMIN' | 'BROKER_TESTER';
+  role: 'ADMIN' | 'BROKER_TESTER' | 'CLIENT_USER';
   active: boolean;
   expiresAt: string | null;
   lastSeenAt: string | null;
@@ -281,10 +281,10 @@ export interface HydratedQuote {
 
 export const api = {
   getCatalog: () => apiFetch<CatalogResponse>('/meta/catalog'),
-  lookupPlate: (plate: string) =>
+  lookupPlate: (plate: string, scope: 'client' | 'broker' = 'broker') =>
     apiFetch<PlateLookupResponse>('/lookup/plate', {
       method: 'POST',
-      body: JSON.stringify({ plate }),
+      body: JSON.stringify({ plate, scope }),
     }),
   verifyKyc: (idType: 'NIDA' | 'TIN' | 'PASSPORT', idNumber: string) =>
     apiFetch<{
@@ -308,9 +308,11 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   listClients: (q = '') =>
-    apiFetch<{ clients: ClientRecord[] }>(`/clients${q ? `?q=${encodeURIComponent(q)}` : ''}`),
-  listQuotes: () => apiFetch<{ quotes: HydratedQuote[] }>('/quotes'),
-  getQuote: (id: string) => apiFetch<HydratedQuote>(`/quotes/${id}`),
+    apiFetch<{ clients: ClientRecord[] }>(`/clients?scope=broker${q ? `&q=${encodeURIComponent(q)}` : ''}`),
+  listQuotes: (scope: 'client' | 'broker' = 'broker') =>
+    apiFetch<{ scope: 'client' | 'broker'; quotes: HydratedQuote[] }>(`/quotes?scope=${scope}`),
+  getQuote: (id: string, scope: 'client' | 'broker' = 'broker') =>
+    apiFetch<HydratedQuote>(`/quotes/${id}?scope=${scope}`),
   createQuote: (payload: Record<string, unknown>) =>
     apiFetch<HydratedQuote>('/quotes', {
       method: 'POST',
@@ -367,8 +369,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({}),
     }),
-  listPolicies: () =>
+  listPolicies: (scope: 'client' | 'broker' = 'broker') =>
     apiFetch<{
+      scope: 'client' | 'broker';
       policies: Array<
         HydratedQuote['policies'][0] & {
           insurer?: InsurerProfile;
@@ -377,7 +380,7 @@ export const api = {
           firstLossPayee?: string | null;
         }
       >;
-    }>('/policies'),
+    }>(`/policies?scope=${scope}`),
   verifyEcosystemPolicy: (plate: string) =>
     apiFetch<EcosystemPolicyVerification>(
       `/ecosystem/policies/verify?plate=${encodeURIComponent(plate)}`,
@@ -441,7 +444,7 @@ export const api = {
     email: string;
     name: string;
     organization?: string;
-    role?: 'ADMIN' | 'BROKER_TESTER';
+    role?: 'ADMIN' | 'BROKER_TESTER' | 'CLIENT_USER';
     expiresAt?: string | null;
   }) =>
     apiFetch<{ tester: AllowedTesterRecord }>('/uat/admin/testers', {

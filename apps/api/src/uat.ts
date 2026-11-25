@@ -7,7 +7,7 @@ export interface UatUser {
   email: string;
   name: string;
   organization: string | null;
-  role: 'ADMIN' | 'BROKER_TESTER';
+  role: 'ADMIN' | 'BROKER_TESTER' | 'CLIENT_USER';
 }
 
 declare module 'fastify' {
@@ -96,7 +96,7 @@ async function resolveUatUser(request: FastifyRequest): Promise<{
       email: tester.email,
       name: tester.name,
       organization: tester.organization,
-      role: tester.role as 'ADMIN' | 'BROKER_TESTER',
+      role: tester.role as 'ADMIN' | 'BROKER_TESTER' | 'CLIENT_USER',
     },
   };
 }
@@ -389,7 +389,7 @@ export async function registerUatModule(app: FastifyInstance) {
         email: z.string().email(),
         name: z.string().min(2),
         organization: z.string().optional(),
-        role: z.enum(['ADMIN', 'BROKER_TESTER']).default('BROKER_TESTER'),
+        role: z.enum(['ADMIN', 'BROKER_TESTER', 'CLIENT_USER']).default('BROKER_TESTER'),
         expiresAt: z.string().optional().nullable(),
       })
       .safeParse(request.body);

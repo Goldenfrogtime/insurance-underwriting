@@ -63,6 +63,8 @@ model Quote {
   quoteNumber                String   @unique
   channel                    String   @default("BROKER") // BROKER | CLIENT_APP
   brokerName                 String?
+  brokerOrganization         String?
+  createdByEmail             String?
   insurerCode                String
   status                     String   @default("DRAFT") // PolicyState
   activeVersion              Int      @default(1)
@@ -193,6 +195,7 @@ model Policy {
   vehicle            Vehicle  @relation(fields: [vehicleId], references: [id])
   customerId         String
   customer           Customer @relation(fields: [customerId], references: [id])
+  createdByEmail     String?
   insurerCode        String
   vehicleClass       String
   coverType          String

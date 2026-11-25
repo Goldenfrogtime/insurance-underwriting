@@ -191,8 +191,9 @@ export function UnderwritingWizard({
   // Resume existing quote if selected from Quotations list
   useEffect(() => {
     if (!resumeQuoteId) return;
+    const scope = mode === 'CLIENT_APP' ? 'client' : 'broker';
     api
-      .getQuote(resumeQuoteId)
+      .getQuote(resumeQuoteId, scope)
       .then((q) => {
         setQuote(q);
         hydrateKycFromQuote(q);
@@ -203,7 +204,15 @@ export function UnderwritingWizard({
         }
       })
       .catch(() => {});
-  }, [resumeQuoteId]);
+  }, [resumeQuoteId, mode]);
+
+  // Prevent cross-mode quote leakage when toggling Broker <-> Client App
+  useEffect(() => {
+    if (quote && quote.channel !== mode) {
+      setQuote(null);
+      setStep(1);
+    }
+  }, [mode, quote]);
 
   function hydrateKycFromQuote(q: HydratedQuote) {
     if (q.customer) {
@@ -250,7 +259,7 @@ export function UnderwritingWizard({
     setCorrEvidence('');
 
     try {
-      const res = await api.lookupPlate(raw);
+      const res = await api.lookupPlate(raw, mode === 'CLIENT_APP' ? 'client' : 'broker');
       setLookup(res);
 
       if (res.tra.ok && res.tra.vehicle) {
@@ -1988,7 +1997,7 @@ export function UnderwritingWizard({
               {/* Printable Quote Docs (V1 #4) */}
               <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
                 <a
-                  href={`/api/v1/documents/quotes/${quote.id}/quotation.pdf`}
+                  href={`/api/v1/documents/quotes/${quote.id}/quotation.pdf?scope=${mode === 'CLIENT_APP' ? 'client' : 'broker'}`}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
@@ -1997,7 +2006,7 @@ export function UnderwritingWizard({
                   Quotation PDF
                 </a>
                 <a
-                  href={`/api/v1/documents/quotes/${quote.id}/proforma.pdf`}
+                  href={`/api/v1/documents/quotes/${quote.id}/proforma.pdf?scope=${mode === 'CLIENT_APP' ? 'client' : 'broker'}`}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
@@ -2006,7 +2015,7 @@ export function UnderwritingWizard({
                   Proforma Invoice
                 </a>
                 <a
-                  href={`/api/v1/documents/quotes/${quote.id}/proposal.pdf`}
+                  href={`/api/v1/documents/quotes/${quote.id}/proposal.pdf?scope=${mode === 'CLIENT_APP' ? 'client' : 'broker'}`}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
@@ -2016,7 +2025,7 @@ export function UnderwritingWizard({
                 </a>
                 {mode === 'BROKER' && (
                   <a
-                    href={`/api/v1/documents/quotes/${quote.id}/debit-note.pdf`}
+                    href={`/api/v1/documents/quotes/${quote.id}/debit-note.pdf?scope=broker`}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100"
@@ -2483,7 +2492,7 @@ export function UnderwritingWizard({
                     insurerName: quote.insurer?.name,
                     firstLossPayee: quote.firstLossPayee,
                   }}
-                  onVerifyInEcosystem={onVerifyInEcosystem}
+                  onVerifyInEcosystem={mode === 'BROKER' ? onVerifyInEcosystem : undefined}
                 />
               ))}
             </div>

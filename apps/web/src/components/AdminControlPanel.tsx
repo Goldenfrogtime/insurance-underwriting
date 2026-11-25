@@ -28,6 +28,7 @@ export function AdminControlPanel() {
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
   const [newOrg, setNewOrg] = useState('');
+  const [newRole, setNewRole] = useState<'BROKER_TESTER' | 'CLIENT_USER'>('BROKER_TESTER');
   const [newExpires, setNewExpires] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -87,12 +88,13 @@ export function AdminControlPanel() {
         email: newEmail.trim(),
         name: newName.trim(),
         organization: newOrg.trim() || undefined,
-        role: 'BROKER_TESTER',
+        role: newRole,
         expiresAt: newExpires ? `${newExpires}T23:59:59Z` : null,
       });
       setNewEmail('');
       setNewName('');
       setNewOrg('');
+      setNewRole('BROKER_TESTER');
       setNewExpires('');
       setNotice('Approved broker Gmail added to allowlist.');
       await load();
@@ -227,6 +229,20 @@ export function AdminControlPanel() {
                 placeholder="e.g. Kangaroo Insurance Brokers"
                 className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
               />
+            </div>
+            <div>
+              <label htmlFor="adm-role" className="block text-xs font-semibold text-slate-700">
+                Access Role *
+              </label>
+              <select
+                id="adm-role"
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value as 'BROKER_TESTER' | 'CLIENT_USER')}
+                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+              >
+                <option value="BROKER_TESTER">Broker Tester (Brokerage + Client Preview)</option>
+                <option value="CLIENT_USER">Client Only (Locked to Own Covers Only)</option>
+              </select>
             </div>
             <div>
               <label htmlFor="adm-exp" className="block text-xs font-semibold text-slate-700">

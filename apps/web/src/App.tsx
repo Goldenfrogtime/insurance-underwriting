@@ -52,6 +52,9 @@ export default function App() {
         setUatStatus(status);
         if (me.authenticated && me.user) {
           setUser(me.user);
+          if (me.user.role === 'CLIENT_USER') {
+            setMode('CLIENT_APP');
+          }
         }
       })
       .catch((e) => setError((e as Error).message))
@@ -106,10 +109,28 @@ export default function App() {
       <UatAccessGate
         testingOpen={uatStatus.testingOpen}
         sandboxBannerText={uatStatus.sandboxBannerText}
-        onAuthenticated={(u) => setUser(u)}
+        onAuthenticated={(u) => {
+          setUser(u);
+          if (u.role === 'CLIENT_USER') {
+            setMode('CLIENT_APP');
+            setTab('underwrite');
+          }
+        }}
       />
     );
   }
+
+  const isClientLocked = user.role === 'CLIENT_USER';
+  const effectiveMode: ModeKey = isClientLocked ? 'CLIENT_APP' : mode;
+
+  const handleModeSwitch = (nextMode: ModeKey) => {
+    if (isClientLocked || nextMode === mode) return;
+    setMode(nextMode);
+    setResumeQuoteId(null);
+    if (nextMode === 'CLIENT_APP' && tab === 'ecosystem') {
+      setTab('underwrite');
+    }
+  };
 
   const activeScreenLabel =
     tab === 'underwrite'
@@ -154,10 +175,12 @@ export default function App() {
                 { id: 'underwrite', label: 'New Cover', icon: Zap },
                 {
                   id: 'quotes',
-                  label: mode === 'CLIENT_APP' ? 'My Stickers' : 'Quotes & Risk Notes',
+                  label: effectiveMode === 'CLIENT_APP' ? 'My Stickers' : 'Quotes & Risk Notes',
                   icon: FileText,
                 },
-                { id: 'ecosystem', label: 'ClaimFlow Bridge', icon: Link2 },
+                ...(effectiveMode === 'BROKER'
+                  ? [{ id: 'ecosystem' as TabKey, label: 'ClaimFlow Bridge', icon: Link2 }]
+                  : []),
                 ...(user.role === 'ADMIN'
                   ? [{ id: 'admin' as TabKey, label: 'Admin & Remarks', icon: Settings2 }]
                   : []),
@@ -181,36 +204,38 @@ export default function App() {
 
           {/* Right Controls: Experience Mode + Sign Out */}
           <div className="flex items-center gap-2">
-            <div
-              role="group"
-              aria-label="Experience mode"
-              className="inline-flex rounded-xl bg-slate-100 p-1"
-            >
-              <button
-                type="button"
-                onClick={() => setMode('BROKER')}
-                className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
-                  mode === 'BROKER'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
+            {!isClientLocked && (
+              <div
+                role="group"
+                aria-label="Experience mode"
+                className="inline-flex rounded-xl bg-slate-100 p-1"
               >
-                <Briefcase className="h-3.5 w-3.5 text-sky-600" aria-hidden="true" />
-                Broker
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('CLIENT_APP')}
-                className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
-                  mode === 'CLIENT_APP'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Smartphone className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
-                Client App
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => handleModeSwitch('BROKER')}
+                  className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                    effectiveMode === 'BROKER'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Briefcase className="h-3.5 w-3.5 text-sky-600" aria-hidden="true" />
+                  Broker
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleModeSwitch('CLIENT_APP')}
+                  className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                    effectiveMode === 'CLIENT_APP'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Smartphone className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+                  Client App
+                </button>
+              </div>
+            )}
 
             <button
               type="button"
@@ -239,7 +264,7 @@ export default function App() {
           </div>
         ) : tab === 'underwrite' ? (
           <UnderwritingWizard
-            mode={mode}
+            mode={effectiveMode}
             catalog={catalog}
             resumeQuoteId={resumeQuoteId}
             onQuoteCleared={() => setResumeQuoteId(null)}
@@ -248,15 +273,16 @@ export default function App() {
           />
         ) : tab === 'quotes' ? (
           <QuotesPoliciesView
-            mode={mode}
+            mode={effectiveMode}
+            user={user}
             onResumeQuote={handleResumeQuote}
-            onVerifyInEcosystem={handleVerifyInEcosystem}
+            onVerifyInEcosystem={effectiveMode === 'BROKER' ? handleVerifyInEcosystem : undefined}
             onStartNew={() => {
               setResumeQuoteId(null);
               setTab('underwrite');
             }}
           />
-        ) : tab === 'ecosystem' ? (
+        ) : tab === 'ecosystem' && effectiveMode === 'BROKER' ? (
           <EcosystemBridgeView initialPlate={ecosystemPlate} />
         ) : (
           <AdminControlPanel />
@@ -266,7 +292,7 @@ export default function App() {
       {/* Always-available Floating Broker Remarks Drawer */}
       <RemarksDrawer
         user={user}
-        mode={mode}
+        mode={effectiveMode}
         currentScreen={activeScreenLabel}
         activePlate={tab === 'underwrite' ? wizardCtx.plate : ecosystemPlate || null}
         activeQuoteNumber={tab === 'underwrite' ? wizardCtx.quoteNumber : null}

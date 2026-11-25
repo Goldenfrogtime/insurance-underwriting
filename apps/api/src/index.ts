@@ -40,13 +40,77 @@ import {
 import { prisma } from './db.js';
 import { seedDatabase } from './seed.js';
 import { generateCoverNotePdf, generateQuoteDocumentPdf } from './documents.js';
-import { registerUatModule } from './uat.js';
+import { registerUatModule, type UatUser } from './uat.js';
 
 const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 15 * 1024 * 1024 });
 const adapters = createMockAdapterRegistry();
 
 await app.register(cors, { origin: true, credentials: true });
 await registerUatModule(app);
+
+// ---------------------------------------------------------------------------
+// Privacy & Multi-Tenant Isolation Helpers
+// ---------------------------------------------------------------------------
+type EffectiveScope = 'client' | 'broker';
+
+function resolveEffectiveScope(user: UatUser, requestedScope?: string): EffectiveScope {
+  if (user.role === 'CLIENT_USER') return 'client';
+  if (requestedScope === 'client') return 'client';
+  return 'broker';
+}
+
+function canAccessQuoteRecord(
+  quote: {
+    channel: string;
+    createdByEmail: string | null;
+    brokerOrganization: string | null;
+    customer?: { email: string | null } | null;
+  },
+  user: UatUser,
+  scope: EffectiveScope,
+): boolean {
+  const userEmail = user.email.toLowerCase();
+  const createdBy = quote.createdByEmail?.toLowerCase() ?? null;
+  const custEmail = quote.customer?.email?.toLowerCase() ?? null;
+
+  if (scope === 'client') {
+    if (custEmail === userEmail) return true;
+    if (quote.channel === 'CLIENT_APP' && createdBy === userEmail) return true;
+    return false;
+  }
+
+  if (user.role === 'ADMIN') return true;
+  if (createdBy === userEmail) return true;
+  if (
+    quote.channel === 'BROKER' &&
+    user.organization &&
+    quote.brokerOrganization &&
+    quote.brokerOrganization.toLowerCase() === user.organization.toLowerCase()
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function sanitizeQuoteForScope<T extends Record<string, unknown>>(quote: T, scope: EffectiveScope): T {
+  if (scope !== 'client') return quote;
+  const sanitized: Record<string, unknown> = {
+    ...quote,
+    totalBrokerCommissionTzs: 0,
+    totalVatOnCommissionTzs: 0,
+    totalInsurerSettlementTzs: 0,
+  };
+  if (Array.isArray(quote.items)) {
+    sanitized.items = quote.items.map((item: Record<string, unknown>) => {
+      if (item && typeof item === 'object' && item.calculation && typeof item.calculation === 'object') {
+        const { commission: _hidden, ...restCalc } = item.calculation as Record<string, unknown>;
+        return { ...item, calculation: restCalc };
+      }
+      return item;
+    });
+  }
+  return sanitized as T;
+}
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -236,14 +300,17 @@ app.get('/api/v1/meta/catalog', async () => ({
 // 2. Plate Lookup (Parallel TRA + TIRA MIS + Valuation + ClaimFlow History)
 // ---------------------------------------------------------------------------
 app.post('/api/v1/lookup/plate', async (request, reply) => {
+  const user = request.uatUser!;
   const body = z
     .object({
       plate: z.string().min(2),
+      scope: z.enum(['client', 'broker']).optional(),
     })
     .safeParse(request.body);
   if (!body.success) {
     return reply.code(400).send({ error: 'Registration number is required.' });
   }
+  const scope = resolveEffectiveScope(user, body.data.scope);
 
   const normalized = normalizePlate(body.data.plate);
 
@@ -305,11 +372,20 @@ app.post('/api/v1/lookup/plate', async (request, reply) => {
       },
     });
 
-    matchedCustomer = await prisma.customer.findFirst({
-      where: {
-        fullName: traResult.vehicle.registeredOwnerName,
-      },
-    });
+    // Only brokers may auto-match against the global client directory; clients only match their own email
+    if (scope === 'broker') {
+      matchedCustomer = await prisma.customer.findFirst({
+        where: {
+          fullName: traResult.vehicle.registeredOwnerName,
+        },
+      });
+    } else {
+      matchedCustomer = await prisma.customer.findFirst({
+        where: {
+          email: user.email,
+        },
+      });
+    }
   }
 
   // If we issued a policy locally on CoverFlow for this plate, also surface it as active cover
@@ -414,7 +490,14 @@ app.post('/api/v1/rating/preview', async (request, reply) => {
 // ---------------------------------------------------------------------------
 // 5. Clients Search & Reuse (Broker Portal)
 // ---------------------------------------------------------------------------
-app.get('/api/v1/clients', async (request) => {
+app.get('/api/v1/clients', async (request, reply) => {
+  const user = request.uatUser!;
+  const requestedScope = (request.query as { scope?: string }).scope;
+  const scope = resolveEffectiveScope(user, requestedScope);
+  if (scope === 'client') {
+    return reply.code(403).send({ error: 'Client directory is restricted to authorized brokers.' });
+  }
+
   const q = ((request.query as { q?: string }).q ?? '').trim();
   const clients = await prisma.customer.findMany({
     where: q
@@ -461,9 +544,11 @@ const QuoteItemInputSchema = z.object({
 });
 
 app.get('/api/v1/quotes', async (request) => {
-  const channel = (request.query as { channel?: string }).channel;
+  const user = request.uatUser!;
+  const query = request.query as { channel?: string; scope?: string };
+  const scope = resolveEffectiveScope(user, query.scope);
+
   const quotes = await prisma.quote.findMany({
-    where: channel ? { channel } : undefined,
     include: {
       customer: true,
       items: {
@@ -474,23 +559,37 @@ app.get('/api/v1/quotes', async (request) => {
       policies: true,
     },
     orderBy: { updatedAt: 'desc' },
-    take: 50,
+    take: 100,
   });
 
+  const visibleQuotes = quotes.filter((q) => canAccessQuoteRecord(q, user, scope));
+
   return {
-    quotes: quotes.map((q) => ({
-      ...q,
-      statusLabel: formatPolicyStatusLabel(q.status as PolicyState),
-      insurer: getInsurerByCode(q.insurerCode),
-    })),
+    scope,
+    quotes: visibleQuotes.map((q) =>
+      sanitizeQuoteForScope(
+        {
+          ...q,
+          statusLabel: formatPolicyStatusLabel(q.status as PolicyState),
+          insurer: getInsurerByCode(q.insurerCode),
+        },
+        scope,
+      ),
+    ),
   };
 });
 
 app.get('/api/v1/quotes/:id', async (request, reply) => {
+  const user = request.uatUser!;
   const { id } = request.params as { id: string };
+  const requestedScope = (request.query as { scope?: string }).scope;
+  const scope = resolveEffectiveScope(user, requestedScope);
   const hydrated = await hydrateQuote(id);
   if (!hydrated) return reply.code(404).send({ error: 'Quote not found' });
-  return hydrated;
+  if (!canAccessQuoteRecord(hydrated, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to this quotation.' });
+  }
+  return sanitizeQuoteForScope(hydrated, scope);
 });
 
 app.post('/api/v1/quotes', async (request, reply) => {
@@ -510,12 +609,15 @@ app.post('/api/v1/quotes', async (request, reply) => {
     item: QuoteItemInputSchema,
   });
 
+  const user = request.uatUser!;
   const parsed = schema.safeParse(request.body);
   if (!parsed.success) {
     return reply.code(400).send({ error: 'Invalid quote payload', details: parsed.error.flatten() });
   }
-  const { channel, brokerName, insurerCode, customerId, quickContact, firstLossPayee, item } =
-    parsed.data;
+  const { brokerName, insurerCode, customerId, quickContact, firstLossPayee, item } = parsed.data;
+  const channel: 'BROKER' | 'CLIENT_APP' =
+    user.role === 'CLIENT_USER' ? 'CLIENT_APP' : parsed.data.channel;
+  const effectiveScope: EffectiveScope = channel === 'CLIENT_APP' ? 'client' : 'broker';
 
   const normPlate = normalizePlate(item.normalizedPlate);
   let vehicle = await prisma.vehicle.findUnique({ where: { normalizedPlate: normPlate } });
@@ -578,13 +680,14 @@ app.post('/api/v1/quotes', async (request, reply) => {
   }
 
   // Optional lightweight customer linking at quote stage (never forces 55-field KYC modal!)
-  let resolvedCustomerId = customerId;
-  if (!resolvedCustomerId && (quickContact?.phone || quickContact?.fullName)) {
+  let resolvedCustomerId = channel === 'BROKER' ? customerId : undefined;
+  const clientDefaultEmail = channel === 'CLIENT_APP' ? user.email : null;
+  if (!resolvedCustomerId && (quickContact?.phone || quickContact?.fullName || clientDefaultEmail)) {
     const created = await prisma.customer.create({
       data: {
-        fullName: quickContact.fullName?.trim() || vehicle.registeredOwnerName,
-        phone: quickContact.phone?.trim() || '',
-        email: quickContact.email?.trim() || null,
+        fullName: quickContact?.fullName?.trim() || (channel === 'CLIENT_APP' ? user.name : vehicle.registeredOwnerName),
+        phone: quickContact?.phone?.trim() || '',
+        email: quickContact?.email?.trim() || clientDefaultEmail,
       },
     });
     resolvedCustomerId = created.id;
@@ -598,7 +701,9 @@ app.post('/api/v1/quotes', async (request, reply) => {
     data: {
       quoteNumber,
       channel,
-      brokerName: channel === 'BROKER' ? (brokerName ?? 'Kangaroo Insurance Brokers Co Ltd') : null,
+      brokerName: channel === 'BROKER' ? (brokerName ?? user.organization ?? 'Kangaroo Insurance Brokers Co Ltd') : null,
+      brokerOrganization: channel === 'BROKER' ? (user.organization ?? 'CoverFlow') : null,
+      createdByEmail: user.email.toLowerCase(),
       insurerCode,
       status: calc.referralRequired ? 'REFERRED' : 'QUOTED',
       activeVersion: 1,
@@ -662,18 +767,24 @@ app.post('/api/v1/quotes', async (request, reply) => {
     },
   });
 
-  return reply.code(201).send(await hydrateQuote(createdQuote.id));
+  const createdHydrated = await hydrateQuote(createdQuote.id);
+  return reply.code(201).send(createdHydrated ? sanitizeQuoteForScope(createdHydrated, effectiveScope) : null);
 });
 
 // Add another vehicle to an existing quote (Multi-Vehicle support)
 app.post('/api/v1/quotes/:id/items', async (request, reply) => {
+  const user = request.uatUser!;
   const { id } = request.params as { id: string };
   const parsed = QuoteItemInputSchema.safeParse(request.body);
   if (!parsed.success) {
     return reply.code(400).send({ error: 'Invalid vehicle item', details: parsed.error.flatten() });
   }
-  const quote = await prisma.quote.findUnique({ where: { id } });
+  const quote = await prisma.quote.findUnique({ where: { id }, include: { customer: true } });
   if (!quote) return reply.code(404).send({ error: 'Quote not found' });
+  const scope = resolveEffectiveScope(user, quote.channel === 'CLIENT_APP' ? 'client' : 'broker');
+  if (!canAccessQuoteRecord(quote, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to modify this quotation.' });
+  }
 
   const item = parsed.data;
   const normPlate = normalizePlate(item.normalizedPlate);
@@ -777,12 +888,20 @@ app.post('/api/v1/quotes/:id/items', async (request, reply) => {
 // Reprice/Edit a quote item (creates new version and invalidates old calculation)
 app.patch('/api/v1/quotes/:id/items/:itemId', async (request, reply) => {
   const { id, itemId } = request.params as { id: string; itemId: string };
+  const user = request.uatUser!;
   const existing = await prisma.quoteItem.findUnique({
     where: { id: itemId },
-    include: { vehicle: true, corrections: true, quote: true },
+    include: { vehicle: true, corrections: true, quote: { include: { customer: true } } },
   });
   if (!existing || existing.quoteId !== id) {
     return reply.code(404).send({ error: 'Quote item not found' });
+  }
+  const scope = resolveEffectiveScope(
+    user,
+    existing.quote.channel === 'CLIENT_APP' ? 'client' : 'broker',
+  );
+  if (!canAccessQuoteRecord(existing.quote, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to modify this quotation.' });
   }
 
   const patchSchema = z.object({
@@ -1009,9 +1128,14 @@ app.patch('/api/v1/quotes/:id/kyc-declaration', async (request, reply) => {
   if (!parsed.success) {
     return reply.code(400).send({ error: 'Invalid KYC / Declaration data', details: parsed.error.flatten() });
   }
+  const user = request.uatUser!;
   const d = parsed.data;
-  const quote = await prisma.quote.findUnique({ where: { id } });
+  const quote = await prisma.quote.findUnique({ where: { id }, include: { customer: true } });
   if (!quote) return reply.code(404).send({ error: 'Quote not found' });
+  const scope = resolveEffectiveScope(user, quote.channel === 'CLIENT_APP' ? 'client' : 'broker');
+  if (!canAccessQuoteRecord(quote, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to update this quotation.' });
+  }
 
   let customer;
   if (d.customerId || quote.customerId) {
@@ -1078,7 +1202,17 @@ app.patch('/api/v1/quotes/:id/kyc-declaration', async (request, reply) => {
 // 8. Optional Pre-Cover Baseline Photos (ClaimFlow Handoff)
 // ---------------------------------------------------------------------------
 app.post('/api/v1/quotes/:id/photos', async (request, reply) => {
+  const user = request.uatUser!;
   const { id } = request.params as { id: string };
+  const quoteCheck = await prisma.quote.findUnique({ where: { id }, include: { customer: true } });
+  if (!quoteCheck) return reply.code(404).send({ error: 'Quote not found' });
+  const scope = resolveEffectiveScope(
+    user,
+    quoteCheck.channel === 'CLIENT_APP' ? 'client' : 'broker',
+  );
+  if (!canAccessQuoteRecord(quoteCheck, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to this quotation.' });
+  }
   const schema = z.object({
     plate: z.string().min(2),
     angle: z.enum(['FRONT', 'REAR', 'LEFT', 'RIGHT', 'ODOMETER', 'LOGBOOK']),
@@ -1121,8 +1255,16 @@ app.post('/api/v1/quotes/:id/payments/initiate', async (request, reply) => {
     .safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'Invalid payment method' });
 
+  const user = request.uatUser!;
   const hydrated = await hydrateQuote(id);
   if (!hydrated) return reply.code(404).send({ error: 'Quote not found' });
+  const scope = resolveEffectiveScope(
+    user,
+    hydrated.channel === 'CLIENT_APP' ? 'client' : 'broker',
+  );
+  if (!canAccessQuoteRecord(hydrated, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to initiate payment for this quotation.' });
+  }
 
   if (!hydrated.readiness.issueReady) {
     return reply.code(422).send({
@@ -1185,8 +1327,19 @@ app.post('/api/v1/payments/:controlNumber/simulate', async (request, reply) => {
     .safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'Invalid payment state' });
 
-  const tx = await prisma.paymentTransaction.findUnique({ where: { controlNumber } });
+  const user = request.uatUser!;
+  const tx = await prisma.paymentTransaction.findUnique({
+    where: { controlNumber },
+    include: { quote: { include: { customer: true } } },
+  });
   if (!tx) return reply.code(404).send({ error: 'Payment transaction not found' });
+  const scope = resolveEffectiveScope(
+    user,
+    tx.quote.channel === 'CLIENT_APP' ? 'client' : 'broker',
+  );
+  if (!canAccessQuoteRecord(tx.quote, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to this payment transaction.' });
+  }
 
   adapters.payment.setSimulatedState(controlNumber, parsed.data.state);
   const status = await adapters.payment.checkPaymentStatus(controlNumber);
@@ -1232,8 +1385,16 @@ app.post('/api/v1/payments/:controlNumber/simulate', async (request, reply) => {
 // ---------------------------------------------------------------------------
 app.post('/api/v1/quotes/:id/bind', async (request, reply) => {
   const { id } = request.params as { id: string };
+  const user = request.uatUser!;
   const hydrated = await hydrateQuote(id);
   if (!hydrated) return reply.code(404).send({ error: 'Quote not found' });
+  const scope = resolveEffectiveScope(
+    user,
+    hydrated.channel === 'CLIENT_APP' ? 'client' : 'broker',
+  );
+  if (!canAccessQuoteRecord(hydrated, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to initiate payment for this quotation.' });
+  }
 
   if (!hydrated.readiness.issueReady) {
     return reply.code(422).send({
@@ -1307,6 +1468,7 @@ app.post('/api/v1/quotes/:id/bind', async (request, reply) => {
         quoteId: hydrated.id,
         vehicleId: item.vehicleId,
         customerId: hydrated.customerId!,
+        createdByEmail: hydrated.createdByEmail ?? user.email.toLowerCase(),
         insurerCode: hydrated.insurerCode,
         vehicleClass: item.vehicleClass,
         coverType: item.coverType,
@@ -1374,20 +1536,39 @@ app.post('/api/v1/quotes/:id/bind', async (request, reply) => {
 // ---------------------------------------------------------------------------
 // 11. Issued Policies (Digital Sticker Wallet & Broker Risk Notes)
 // ---------------------------------------------------------------------------
-app.get('/api/v1/policies', async () => {
+app.get('/api/v1/policies', async (request) => {
+  const user = request.uatUser!;
+  const requestedScope = (request.query as { scope?: string }).scope;
+  const scope = resolveEffectiveScope(user, requestedScope);
+
   const policies = await prisma.policy.findMany({
     include: {
       vehicle: true,
       customer: true,
       quote: {
-        include: { preCoverPhotos: true },
+        include: { preCoverPhotos: true, customer: true },
       },
     },
     orderBy: { issuedAt: 'desc' },
-    take: 50,
+    take: 100,
   });
+
+  const visiblePolicies = policies.filter((p) =>
+    canAccessQuoteRecord(
+      {
+        channel: p.quote.channel,
+        createdByEmail: p.createdByEmail ?? p.quote.createdByEmail,
+        brokerOrganization: p.quote.brokerOrganization,
+        customer: p.customer,
+      },
+      user,
+      scope,
+    ),
+  );
+
   return {
-    policies: policies.map((p) => ({
+    scope,
+    policies: visiblePolicies.map((p) => ({
       ...p,
       insurer: getInsurerByCode(p.insurerCode),
       excess: JSON.parse(p.excessJson || '{}'),
@@ -1402,10 +1583,12 @@ app.get('/api/v1/policies', async () => {
 // 12. Printable PDF Documents (Quote, Proforma, Proposal, Debit Note, Cover Note)
 // ---------------------------------------------------------------------------
 app.get('/api/v1/documents/quotes/:id/:docType.pdf', async (request, reply) => {
+  const user = request.uatUser!;
   const { id, docType } = request.params as {
     id: string;
     docType: 'quotation' | 'proforma' | 'proposal' | 'debit-note';
   };
+  const requestedScope = (request.query as { scope?: string }).scope;
   if (!['quotation', 'proforma', 'proposal', 'debit-note'].includes(docType)) {
     return reply.code(400).send({ error: 'Unsupported document type' });
   }
@@ -1419,6 +1602,17 @@ app.get('/api/v1/documents/quotes/:id/:docType.pdf', async (request, reply) => {
   });
   if (!quote) return reply.code(404).send({ error: 'Quote not found' });
 
+  const scope = resolveEffectiveScope(
+    user,
+    requestedScope ?? (quote.channel === 'CLIENT_APP' ? 'client' : 'broker'),
+  );
+  if (!canAccessQuoteRecord(quote, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to this document.' });
+  }
+  if (docType === 'debit-note' && (scope === 'client' || user.role === 'CLIENT_USER')) {
+    return reply.code(403).send({ error: 'Broker debit notes are restricted to broker accounts.' });
+  }
+
   const pdf = await generateQuoteDocumentPdf({ docType, quote });
   return reply
     .header('Content-Type', 'application/pdf')
@@ -1427,12 +1621,33 @@ app.get('/api/v1/documents/quotes/:id/:docType.pdf', async (request, reply) => {
 });
 
 app.get('/api/v1/documents/policies/:id/cover-note.pdf', async (request, reply) => {
+  const user = request.uatUser!;
   const { id } = request.params as { id: string };
+  const requestedScope = (request.query as { scope?: string }).scope;
   const policy = await prisma.policy.findUnique({
     where: { id },
-    include: { customer: true, vehicle: true },
+    include: { customer: true, vehicle: true, quote: true },
   });
   if (!policy) return reply.code(404).send({ error: 'Policy not found' });
+
+  const scope = resolveEffectiveScope(
+    user,
+    requestedScope ?? (policy.quote.channel === 'CLIENT_APP' ? 'client' : 'broker'),
+  );
+  if (
+    !canAccessQuoteRecord(
+      {
+        channel: policy.quote.channel,
+        createdByEmail: policy.createdByEmail ?? policy.quote.createdByEmail,
+        brokerOrganization: policy.quote.brokerOrganization,
+        customer: policy.customer,
+      },
+      user,
+      scope,
+    )
+  ) {
+    return reply.code(403).send({ error: 'You do not have access to this cover note.' });
+  }
 
   const pdf = await generateCoverNotePdf(policy);
   return reply
@@ -1445,6 +1660,9 @@ app.get('/api/v1/documents/policies/:id/cover-note.pdf', async (request, reply) 
 // 13. Ecosystem Integration API (ClaimFlow & AutoFix GMS)
 // ---------------------------------------------------------------------------
 app.get('/api/v1/ecosystem/policies/verify', async (request, reply) => {
+  if (request.uatUser?.role === 'CLIENT_USER') {
+    return reply.code(403).send({ error: 'Ecosystem verification API is restricted to internal/broker systems.' });
+  }
   const plateRaw = (request.query as { plate?: string }).plate;
   if (!plateRaw) return reply.code(400).send({ error: 'plate query param required' });
   const normalized = normalizePlate(plateRaw);
@@ -1519,6 +1737,9 @@ app.get('/api/v1/ecosystem/policies/verify', async (request, reply) => {
 });
 
 app.post('/api/v1/ecosystem/claims-feedback', async (request, reply) => {
+  if (request.uatUser?.role === 'CLIENT_USER') {
+    return reply.code(403).send({ error: 'Claims feedback API is restricted to internal/broker systems.' });
+  }
   const parsed = z
     .object({
       normalizedPlate: z.string().min(2),
