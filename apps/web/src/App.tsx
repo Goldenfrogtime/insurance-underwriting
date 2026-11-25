@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  BarChart3,
   Briefcase,
   FileText,
   Link2,
@@ -13,12 +14,13 @@ import {
 import { api, type CatalogResponse, type UatUser } from './api/client';
 import { UnderwritingWizard } from './components/UnderwritingWizard';
 import { QuotesPoliciesView } from './components/QuotesPoliciesView';
+import { BrokerReportsView } from './components/BrokerReportsView';
 import { EcosystemBridgeView } from './components/EcosystemBridgeView';
 import { UatAccessGate } from './components/UatAccessGate';
 import { RemarksDrawer } from './components/RemarksDrawer';
 import { AdminControlPanel } from './components/AdminControlPanel';
 
-type TabKey = 'underwrite' | 'quotes' | 'ecosystem' | 'admin';
+type TabKey = 'underwrite' | 'quotes' | 'reports' | 'ecosystem' | 'admin';
 type ModeKey = 'BROKER' | 'CLIENT_APP';
 
 export default function App() {
@@ -127,7 +129,7 @@ export default function App() {
     if (isClientLocked || nextMode === mode) return;
     setMode(nextMode);
     setResumeQuoteId(null);
-    if (nextMode === 'CLIENT_APP' && tab === 'ecosystem') {
+    if (nextMode === 'CLIENT_APP' && (tab === 'ecosystem' || tab === 'reports')) {
       setTab('underwrite');
     }
   };
@@ -137,9 +139,11 @@ export default function App() {
       ? wizardCtx.screen
       : tab === 'quotes'
         ? 'Quotes & Issued Risk Notes'
-        : tab === 'ecosystem'
-          ? 'ClaimFlow Ecosystem Bridge'
-          : 'Admin Control Panel';
+        : tab === 'reports'
+          ? 'Broker Management Reports'
+          : tab === 'ecosystem'
+            ? 'ClaimFlow Ecosystem Bridge'
+            : 'Admin Control Panel';
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -179,7 +183,10 @@ export default function App() {
                   icon: FileText,
                 },
                 ...(effectiveMode === 'BROKER'
-                  ? [{ id: 'ecosystem' as TabKey, label: 'ClaimFlow Bridge', icon: Link2 }]
+                  ? [
+                      { id: 'reports' as TabKey, label: 'Reports', icon: BarChart3 },
+                      { id: 'ecosystem' as TabKey, label: 'ClaimFlow Bridge', icon: Link2 },
+                    ]
                   : []),
                 ...(user.role === 'ADMIN'
                   ? [{ id: 'admin' as TabKey, label: 'Admin & Remarks', icon: Settings2 }]
@@ -282,6 +289,8 @@ export default function App() {
               setTab('underwrite');
             }}
           />
+        ) : tab === 'reports' && effectiveMode === 'BROKER' ? (
+          <BrokerReportsView catalog={catalog} onResumeQuote={handleResumeQuote} />
         ) : tab === 'ecosystem' && effectiveMode === 'BROKER' ? (
           <EcosystemBridgeView initialPlate={ecosystemPlate} />
         ) : (

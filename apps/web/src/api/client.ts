@@ -498,7 +498,127 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     }),
+
+  getBrokerReport: (params: {
+    from?: string;
+    to?: string;
+    insurerCode?: string;
+    coverType?: string;
+    expiryDays?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set('from', params.from);
+    if (params.to) qs.set('to', params.to);
+    if (params.insurerCode && params.insurerCode !== 'ALL') qs.set('insurerCode', params.insurerCode);
+    if (params.coverType && params.coverType !== 'ALL') qs.set('coverType', params.coverType);
+    if (params.expiryDays) qs.set('expiryDays', params.expiryDays);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return apiFetch<BrokerReportResponse>(`/reports/broker${suffix}`);
+  },
 };
+
+export interface BrokerReportResponse {
+  generatedAt: string;
+  scopeLabel: string;
+  filters: {
+    from: string | null;
+    to: string | null;
+    insurerCode: string;
+    coverType: string;
+    expiryDays: number | 'ALL';
+  };
+  summary: {
+    policyCount: number;
+    totalGrossWrittenTzs: number;
+    totalNetPremiumTzs: number;
+    totalVatCollectedTzs: number;
+    totalBrokerCommissionTzs: number;
+    totalVatOnCommissionTzs: number;
+    totalCommissionInvoiceableTzs: number;
+    pendingQuoteCount: number;
+    pendingPipelineTzs: number;
+    renewalsDueCount: number;
+    renewalsDueValueTzs: number;
+  };
+  commissionByInsurer: Array<{
+    insurerCode: string;
+    insurerName: string;
+    policyCount: number;
+    netPremiumTzs: number;
+    vatAmountTzs: number;
+    grossPayableTzs: number;
+    brokerCommissionTzs: number;
+    vatOnCommissionTzs: number;
+    totalCommissionInvoiceTzs: number;
+  }>;
+  productionRows: Array<{
+    policyId: string;
+    quoteId: string;
+    quoteNumber: string;
+    policyNo: string;
+    coverNoteNo: string;
+    stickerNo: string;
+    issuedAt: string;
+    issuedDate: string;
+    insurerCode: string;
+    insurerName: string;
+    customerName: string;
+    customerPhone: string;
+    plate: string;
+    vehicleLabel: string;
+    vehicleClass: string;
+    coverType: string;
+    startDate: string;
+    endDate: string;
+    sumInsuredTzs: number;
+    netPremiumTzs: number;
+    vatAmountTzs: number;
+    grossPayableTzs: number;
+    commissionRatePct: number;
+    brokerCommissionTzs: number;
+    vatOnCommissionTzs: number;
+    totalCommissionInvoiceTzs: number;
+    paymentMethod: string;
+    controlNumber: string;
+    brokerName: string;
+    status: string;
+  }>;
+  pendingRows: Array<{
+    quoteId: string;
+    quoteNumber: string;
+    createdDate: string;
+    updatedAt: string;
+    insurerCode: string;
+    insurerName: string;
+    customerName: string;
+    customerPhone: string;
+    plates: string;
+    coverType: string;
+    netPremiumTzs: number;
+    vatAmountTzs: number;
+    grossPayableTzs: number;
+    status: string;
+    statusLabel: string;
+    paymentState: string;
+  }>;
+  renewalRows: Array<{
+    policyId: string;
+    policyNo: string;
+    coverNoteNo: string;
+    stickerNo: string;
+    insurerCode: string;
+    insurerName: string;
+    customerName: string;
+    customerPhone: string;
+    plate: string;
+    vehicleLabel: string;
+    coverType: string;
+    startDate: string;
+    endDate: string;
+    daysRemaining: number;
+    expiringPremiumTzs: number;
+  }>;
+}
 
 export function formatTzs(amount: number | undefined | null): string {
   return `TZS ${Math.round(amount ?? 0).toLocaleString('en-US')}`;

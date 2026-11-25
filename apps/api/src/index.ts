@@ -2016,7 +2016,554 @@ app.post('/api/v1/ecosystem/claims-feedback', async (request, reply) => {
 });
 
 // ---------------------------------------------------------------------------
-// 14. Serve Built Web App (Single-Port Production / Local Mode)
+// 14. Broker Management Reports & Excel-Ready CSV Exports (Broker / Admin Only)
+// ---------------------------------------------------------------------------
+function csvCell(val: unknown): string {
+  const s = String(val ?? '');
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function daysUntilIso(targetIso: string): number {
+  const today = new Date(`${todayIso()}T00:00:00Z`).getTime();
+  const target = new Date(`${targetIso}T00:00:00Z`).getTime();
+  return Math.round((target - today) / (1000 * 60 * 60 * 24));
+}
+
+async function buildBrokerReportData(
+  user: UatUser,
+  query: {
+    from?: string;
+    to?: string;
+    insurerCode?: string;
+    coverType?: string;
+    expiryDays?: string;
+  },
+) {
+  const fromDate = query.from && /^\d{4}-\d{2}-\d{2}$/.test(query.from) ? query.from : null;
+  const toDate = query.to && /^\d{4}-\d{2}-\d{2}$/.test(query.to) ? query.to : null;
+  const insurerFilter =
+    query.insurerCode && query.insurerCode !== 'ALL' ? query.insurerCode : null;
+  const coverFilter = query.coverType && query.coverType !== 'ALL' ? query.coverType : null;
+  const expiryDaysRaw = query.expiryDays === 'ALL' ? null : Number(query.expiryDays || 60);
+  const expiryDays =
+    expiryDaysRaw !== null && Number.isFinite(expiryDaysRaw) && expiryDaysRaw > 0
+      ? expiryDaysRaw
+      : null;
+
+  // Fetch policies and quotes in parallel without large photo/blob columns for speed
+  const [rawPolicies, rawQuotes] = await Promise.all([
+    prisma.policy.findMany({
+      select: {
+        id: true,
+        policyNo: true,
+        coverNoteNo: true,
+        stickerNo: true,
+        createdByEmail: true,
+        insurerCode: true,
+        vehicleClass: true,
+        coverType: true,
+        duration: true,
+        startDate: true,
+        endDate: true,
+        sumInsuredTzs: true,
+        netPremiumTzs: true,
+        vatAmountTzs: true,
+        totalPayableTzs: true,
+        status: true,
+        issuedAt: true,
+        vehicle: {
+          select: {
+            normalizedPlate: true,
+            make: true,
+            model: true,
+            manufactureYear: true,
+          },
+        },
+        customer: {
+          select: {
+            fullName: true,
+            phone: true,
+            email: true,
+          },
+        },
+        quote: {
+          select: {
+            id: true,
+            quoteNumber: true,
+            channel: true,
+            brokerName: true,
+            createdByEmail: true,
+            brokerOrganization: true,
+            payments: {
+              select: {
+                method: true,
+                controlNumber: true,
+                state: true,
+                bankName: true,
+                mobileNetwork: true,
+              },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
+          },
+        },
+      },
+      orderBy: { issuedAt: 'desc' },
+      take: 500,
+    }),
+    prisma.quote.findMany({
+      where: {
+        status: { notIn: ['ISSUED', 'DELIVERED', 'CANCELLED'] },
+      },
+      select: {
+        id: true,
+        quoteNumber: true,
+        channel: true,
+        brokerName: true,
+        createdByEmail: true,
+        brokerOrganization: true,
+        insurerCode: true,
+        status: true,
+        totalNetPremiumTzs: true,
+        totalVatTzs: true,
+        totalPayableTzs: true,
+        createdAt: true,
+        updatedAt: true,
+        customer: {
+          select: {
+            fullName: true,
+            phone: true,
+            email: true,
+          },
+        },
+        items: {
+          where: { isActive: true },
+          select: {
+            vehicleClass: true,
+            coverType: true,
+            sumInsuredTzs: true,
+            vehicle: { select: { normalizedPlate: true, make: true, model: true } },
+          },
+        },
+        payments: {
+          select: { state: true, method: true, controlNumber: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 300,
+    }),
+  ]);
+
+  // Enforce multi-tenant broker organization scoping
+  const scopedPolicies = rawPolicies.filter((p) =>
+    canAccessQuoteRecord(
+      {
+        channel: p.quote.channel,
+        createdByEmail: p.createdByEmail ?? p.quote.createdByEmail,
+        brokerOrganization: p.quote.brokerOrganization,
+        customer: p.customer,
+      },
+      user,
+      'broker',
+    ),
+  );
+
+  const scopedPendingQuotes = rawQuotes.filter((q) =>
+    canAccessQuoteRecord(
+      {
+        channel: q.channel,
+        createdByEmail: q.createdByEmail,
+        brokerOrganization: q.brokerOrganization,
+        customer: q.customer,
+      },
+      user,
+      'broker',
+    ),
+  );
+
+  // Filter issued policies for Production & Commission reports
+  const filteredPolicies = scopedPolicies.filter((p) => {
+    const issuedDay = p.issuedAt.toISOString().slice(0, 10);
+    if (fromDate && issuedDay < fromDate) return false;
+    if (toDate && issuedDay > toDate) return false;
+    if (insurerFilter && p.insurerCode !== insurerFilter) return false;
+    if (coverFilter && p.coverType !== coverFilter) return false;
+    return true;
+  });
+
+  // Commission math (12.5% of Net Premium + 18% VAT on Commission, per TIRA Motor standard)
+  const productionRows = filteredPolicies.map((p) => {
+    const insurer = getInsurerByCode(p.insurerCode);
+    const commissionRatePct = 12.5;
+    const brokerCommissionTzs = Math.round(p.netPremiumTzs * (commissionRatePct / 100));
+    const vatOnCommissionTzs = Math.round(brokerCommissionTzs * 0.18);
+    const totalCommissionInvoiceTzs = brokerCommissionTzs + vatOnCommissionTzs;
+    const latestPay = p.quote.payments[0];
+    return {
+      policyId: p.id,
+      quoteId: p.quote.id,
+      quoteNumber: p.quote.quoteNumber,
+      policyNo: p.policyNo,
+      coverNoteNo: p.coverNoteNo,
+      stickerNo: p.stickerNo,
+      issuedAt: p.issuedAt.toISOString(),
+      issuedDate: p.issuedAt.toISOString().slice(0, 10),
+      insurerCode: p.insurerCode,
+      insurerName: insurer?.name ?? p.insurerCode,
+      customerName: p.customer.fullName,
+      customerPhone: p.customer.phone,
+      plate: p.vehicle.normalizedPlate,
+      vehicleLabel: `${p.vehicle.manufactureYear} ${p.vehicle.make} ${p.vehicle.model}`,
+      vehicleClass:
+        VEHICLE_CLASS_CATALOG[p.vehicleClass as VehicleClass]?.label ?? p.vehicleClass,
+      coverType: p.coverType,
+      startDate: p.startDate,
+      endDate: p.endDate,
+      sumInsuredTzs: p.sumInsuredTzs,
+      netPremiumTzs: p.netPremiumTzs,
+      vatAmountTzs: p.vatAmountTzs,
+      grossPayableTzs: p.totalPayableTzs,
+      commissionRatePct,
+      brokerCommissionTzs,
+      vatOnCommissionTzs,
+      totalCommissionInvoiceTzs,
+      paymentMethod: latestPay?.method ?? 'MOBILE_MONEY',
+      controlNumber: latestPay?.controlNumber ?? '',
+      brokerName: p.quote.brokerName ?? 'CoverFlow Broker',
+      status: p.status,
+    };
+  });
+
+  // Insurer-grouped Commission Statement
+  const insurerMap = new Map<
+    string,
+    {
+      insurerCode: string;
+      insurerName: string;
+      policyCount: number;
+      netPremiumTzs: number;
+      vatAmountTzs: number;
+      grossPayableTzs: number;
+      brokerCommissionTzs: number;
+      vatOnCommissionTzs: number;
+      totalCommissionInvoiceTzs: number;
+    }
+  >();
+
+  for (const r of productionRows) {
+    const entry = insurerMap.get(r.insurerCode) ?? {
+      insurerCode: r.insurerCode,
+      insurerName: r.insurerName,
+      policyCount: 0,
+      netPremiumTzs: 0,
+      vatAmountTzs: 0,
+      grossPayableTzs: 0,
+      brokerCommissionTzs: 0,
+      vatOnCommissionTzs: 0,
+      totalCommissionInvoiceTzs: 0,
+    };
+    entry.policyCount += 1;
+    entry.netPremiumTzs += r.netPremiumTzs;
+    entry.vatAmountTzs += r.vatAmountTzs;
+    entry.grossPayableTzs += r.grossPayableTzs;
+    entry.brokerCommissionTzs += r.brokerCommissionTzs;
+    entry.vatOnCommissionTzs += r.vatOnCommissionTzs;
+    entry.totalCommissionInvoiceTzs += r.totalCommissionInvoiceTzs;
+    insurerMap.set(r.insurerCode, entry);
+  }
+
+  // Pending Quotes Pipeline
+  const pendingRows = scopedPendingQuotes
+    .filter((q) => {
+      const createdDay = q.createdAt.toISOString().slice(0, 10);
+      if (fromDate && createdDay < fromDate) return false;
+      if (toDate && createdDay > toDate) return false;
+      if (insurerFilter && q.insurerCode !== insurerFilter) return false;
+      if (coverFilter && !q.items.some((i) => i.coverType === coverFilter)) return false;
+      return true;
+    })
+    .map((q) => {
+      const insurer = getInsurerByCode(q.insurerCode);
+      const latestPay = q.payments[0];
+      return {
+        quoteId: q.id,
+        quoteNumber: q.quoteNumber,
+        createdDate: q.createdAt.toISOString().slice(0, 10),
+        updatedAt: q.updatedAt.toISOString(),
+        insurerCode: q.insurerCode,
+        insurerName: insurer?.name ?? q.insurerCode,
+        customerName: q.customer?.fullName ?? 'Pending Customer KYC',
+        customerPhone: q.customer?.phone ?? '',
+        plates: q.items.map((i) => i.vehicle.normalizedPlate).join(', ') || '—',
+        coverType: q.items[0]?.coverType ?? '—',
+        netPremiumTzs: q.totalNetPremiumTzs,
+        vatAmountTzs: q.totalVatTzs,
+        grossPayableTzs: q.totalPayableTzs,
+        status: q.status,
+        statusLabel: formatPolicyStatusLabel(q.status as PolicyState),
+        paymentState: latestPay?.state ?? 'NOT_INITIATED',
+      };
+    });
+
+  // Expiring Policies & Renewals (filters by insurer/cover & expiry window, sorted by soonest expiry)
+  const renewalRows = scopedPolicies
+    .filter((p) => {
+      if (p.status === 'CANCELLED') return false;
+      if (insurerFilter && p.insurerCode !== insurerFilter) return false;
+      if (coverFilter && p.coverType !== coverFilter) return false;
+      const daysLeft = daysUntilIso(p.endDate);
+      if (expiryDays !== null && daysLeft > expiryDays) return false;
+      return true;
+    })
+    .map((p) => {
+      const insurer = getInsurerByCode(p.insurerCode);
+      const daysRemaining = daysUntilIso(p.endDate);
+      return {
+        policyId: p.id,
+        policyNo: p.policyNo,
+        coverNoteNo: p.coverNoteNo,
+        stickerNo: p.stickerNo,
+        insurerCode: p.insurerCode,
+        insurerName: insurer?.name ?? p.insurerCode,
+        customerName: p.customer.fullName,
+        customerPhone: p.customer.phone,
+        plate: p.vehicle.normalizedPlate,
+        vehicleLabel: `${p.vehicle.manufactureYear} ${p.vehicle.make} ${p.vehicle.model}`,
+        coverType: p.coverType,
+        startDate: p.startDate,
+        endDate: p.endDate,
+        daysRemaining,
+        expiringPremiumTzs: p.totalPayableTzs,
+      };
+    })
+    .sort((a, b) => a.daysRemaining - b.daysRemaining);
+
+  const summary = {
+    policyCount: productionRows.length,
+    totalGrossWrittenTzs: productionRows.reduce((s, r) => s + r.grossPayableTzs, 0),
+    totalNetPremiumTzs: productionRows.reduce((s, r) => s + r.netPremiumTzs, 0),
+    totalVatCollectedTzs: productionRows.reduce((s, r) => s + r.vatAmountTzs, 0),
+    totalBrokerCommissionTzs: productionRows.reduce((s, r) => s + r.brokerCommissionTzs, 0),
+    totalVatOnCommissionTzs: productionRows.reduce((s, r) => s + r.vatOnCommissionTzs, 0),
+    totalCommissionInvoiceableTzs: productionRows.reduce(
+      (s, r) => s + r.totalCommissionInvoiceTzs,
+      0,
+    ),
+    pendingQuoteCount: pendingRows.length,
+    pendingPipelineTzs: pendingRows.reduce((s, r) => s + r.grossPayableTzs, 0),
+    renewalsDueCount: renewalRows.length,
+    renewalsDueValueTzs: renewalRows.reduce((s, r) => s + r.expiringPremiumTzs, 0),
+  };
+
+  return {
+    generatedAt: new Date().toISOString(),
+    scopeLabel:
+      user.role === 'ADMIN'
+        ? 'All UAT Brokerages (Admin Oversight)'
+        : (user.organization ?? user.email),
+    filters: {
+      from: fromDate,
+      to: toDate,
+      insurerCode: insurerFilter ?? 'ALL',
+      coverType: coverFilter ?? 'ALL',
+      expiryDays: expiryDays ?? 'ALL',
+    },
+    summary,
+    commissionByInsurer: Array.from(insurerMap.values()).sort(
+      (a, b) => b.grossPayableTzs - a.grossPayableTzs,
+    ),
+    productionRows,
+    pendingRows,
+    renewalRows,
+  };
+}
+
+app.get('/api/v1/reports/broker', async (request, reply) => {
+  const user = request.uatUser!;
+  if (user.role === 'CLIENT_USER') {
+    return reply.code(403).send({ error: 'Broker reports are restricted to brokerage accounts.' });
+  }
+  const query = request.query as {
+    from?: string;
+    to?: string;
+    insurerCode?: string;
+    coverType?: string;
+    expiryDays?: string;
+  };
+  return buildBrokerReportData(user, query);
+});
+
+app.get('/api/v1/reports/broker/export.csv', async (request, reply) => {
+  const user = request.uatUser!;
+  if (user.role === 'CLIENT_USER') {
+    return reply.code(403).send({ error: 'Broker report exports are restricted to brokerage accounts.' });
+  }
+  const query = request.query as {
+    report?: 'production' | 'commission' | 'pending' | 'renewals';
+    from?: string;
+    to?: string;
+    insurerCode?: string;
+    coverType?: string;
+    expiryDays?: string;
+  };
+  const reportType = query.report ?? 'production';
+  const data = await buildBrokerReportData(user, query);
+
+  let headers: string[] = [];
+  let rows: unknown[][] = [];
+
+  if (reportType === 'production') {
+    headers = [
+      'Issue Date',
+      'Policy No',
+      'Cover Note No',
+      'TIRA Sticker No',
+      'Insured Name',
+      'Phone',
+      'Plate',
+      'Vehicle',
+      'Class',
+      'Insurer',
+      'Cover Type',
+      'Start Date',
+      'End Date',
+      'Sum Insured (TZS)',
+      'Net Premium (TZS)',
+      'VAT 18% (TZS)',
+      'Gross Payable 100% (TZS)',
+      'Payment Method',
+      'Control Number',
+      'Status',
+    ];
+    rows = data.productionRows.map((r) => [
+      r.issuedDate,
+      r.policyNo,
+      r.coverNoteNo,
+      r.stickerNo,
+      r.customerName,
+      r.customerPhone,
+      r.plate,
+      r.vehicleLabel,
+      r.vehicleClass,
+      r.insurerName,
+      r.coverType,
+      r.startDate,
+      r.endDate,
+      r.sumInsuredTzs,
+      r.netPremiumTzs,
+      r.vatAmountTzs,
+      r.grossPayableTzs,
+      r.paymentMethod,
+      r.controlNumber,
+      r.status,
+    ]);
+  } else if (reportType === 'commission') {
+    headers = [
+      'Issue Date',
+      'Insurer',
+      'Policy No',
+      'Cover Note No',
+      'Insured Name',
+      'Plate',
+      'Cover Type',
+      'Net Premium (TZS)',
+      'Gross Paid to Insurer 100% (TZS)',
+      'Commission Rate (%)',
+      'Broker Commission Receivable (TZS)',
+      'VAT on Commission 18% (TZS)',
+      'Total Commission Invoiceable (TZS)',
+    ];
+    rows = data.productionRows.map((r) => [
+      r.issuedDate,
+      r.insurerName,
+      r.policyNo,
+      r.coverNoteNo,
+      r.customerName,
+      r.plate,
+      r.coverType,
+      r.netPremiumTzs,
+      r.grossPayableTzs,
+      r.commissionRatePct,
+      r.brokerCommissionTzs,
+      r.vatOnCommissionTzs,
+      r.totalCommissionInvoiceTzs,
+    ]);
+  } else if (reportType === 'pending') {
+    headers = [
+      'Created Date',
+      'Quote No',
+      'Client Name',
+      'Client Phone',
+      'Plate(s)',
+      'Insurer',
+      'Cover Type',
+      'Net Premium (TZS)',
+      'VAT 18% (TZS)',
+      'Gross Payable (TZS)',
+      'Quote Status',
+      'Payment State',
+    ];
+    rows = data.pendingRows.map((r) => [
+      r.createdDate,
+      r.quoteNumber,
+      r.customerName,
+      r.customerPhone,
+      r.plates,
+      r.insurerName,
+      r.coverType,
+      r.netPremiumTzs,
+      r.vatAmountTzs,
+      r.grossPayableTzs,
+      r.statusLabel,
+      r.paymentState,
+    ]);
+  } else {
+    headers = [
+      'Expiry Date',
+      'Days Remaining',
+      'Policy No',
+      'Cover Note No',
+      'Insured Name',
+      'Phone',
+      'Plate',
+      'Vehicle',
+      'Insurer',
+      'Cover Type',
+      'Start Date',
+      'Expiring Gross Premium (TZS)',
+    ];
+    rows = data.renewalRows.map((r) => [
+      r.endDate,
+      r.daysRemaining,
+      r.policyNo,
+      r.coverNoteNo,
+      r.customerName,
+      r.customerPhone,
+      r.plate,
+      r.vehicleLabel,
+      r.insurerName,
+      r.coverType,
+      r.startDate,
+      r.expiringPremiumTzs,
+    ]);
+  }
+
+  const csvContent =
+    '\uFEFF' +
+    [headers.map(csvCell).join(','), ...rows.map((row) => row.map(csvCell).join(','))].join('\n');
+
+  const filename = `coverflow-${reportType}-report-${todayIso()}.csv`;
+  return reply
+    .header('Content-Type', 'text/csv; charset=utf-8')
+    .header('Content-Disposition', `attachment; filename="${filename}"`)
+    .send(csvContent);
+});
+
+// ---------------------------------------------------------------------------
+// 15. Serve Built Web App (Single-Port Production / Local Mode)
 // ---------------------------------------------------------------------------
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webDistDir = path.resolve(__dirname, '../../web/dist');
