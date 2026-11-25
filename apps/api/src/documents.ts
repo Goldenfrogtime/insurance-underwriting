@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import {
   getInsurerByCode,
+  ProposalQuestionnaireSchema,
   VEHICLE_CLASS_CATALOG,
   type RatingCalculationResult,
   type VehicleClass,
@@ -46,6 +47,8 @@ export async function generateQuoteDocumentPdf(params: {
     proposalAccepted: boolean;
     proposalSignedBy: string | null;
     proposalSignedAt: Date | null;
+    proposalAnswersJson?: string;
+    signedProposalFileName?: string | null;
     createdAt: Date;
     customer: {
       fullName: string;
@@ -290,19 +293,117 @@ export async function generateQuoteDocumentPdf(params: {
     y += 96;
 
     if (docType === 'proposal') {
-      doc.fontSize(10).font('Helvetica-Bold').fillColor('#0F172A').text('AML / CFT & PROPOSAL DECLARATION', 45, y);
+      const parsedAnswers = ProposalQuestionnaireSchema.safeParse(
+        JSON.parse(quote.proposalAnswersJson || '{}'),
+      );
+      const qAns = parsedAnswers.success
+        ? parsedAnswers.data
+        : ProposalQuestionnaireSchema.parse({});
+
+      const parkingLabels: Record<string, string> = {
+        LOCKED_GARAGE: 'Locked Private Garage',
+        GATED_COMPOUND: 'Gated / Watchman Compound',
+        STREET_OR_PUBLIC: 'Street / Open Public Parking',
+        COMMERCIAL_YARD: 'Commercial Fleet Yard / Depot',
+      };
+
+      if (y > doc.page.height - 290) {
+        drawSandboxWatermark(doc);
+        doc.addPage();
+        y = 50;
+      }
+
+      doc
+        .fontSize(10)
+        .font('Helvetica-Bold')
+        .fillColor('#0F172A')
+        .text('UNDERWRITING PROPOSAL QUESTIONNAIRE', 45, y);
+      y += 15;
+
+      const rows: Array<{ q: string; a: string }> = [
+        {
+          q: '1. Previous Motor Insurer',
+          a: qAns.previousInsurer?.trim() || 'None / First-time cover',
+        },
+        {
+          q: '2. Overnight Parking Security',
+          a: parkingLabels[qAns.overnightParking] ?? qAns.overnightParking,
+        },
+        {
+          q: '3. Prior insurer declined, cancelled, or imposed special terms?',
+          a: qAns.priorDeclinedOrCancelled
+            ? `YES — ${qAns.priorDeclinedDetails?.trim() || 'Details to be reviewed'}`
+            : 'NO',
+        },
+        {
+          q: '4. Any accidents, theft, or third-party claims in the past 3 years?',
+          a: qAns.accidentsOrLossesLast3Years
+            ? `YES — ${qAns.accidentsDetails?.trim() || 'Details to be reviewed'}`
+            : 'NO',
+        },
+        {
+          q: '5. Vehicle modified from manufacturer specs or known safety defect?',
+          a: qAns.vehicleModifiedOrDefective
+            ? `YES — ${qAns.modificationDetails?.trim() || 'Details to be reviewed'}`
+            : 'NO',
+        },
+        {
+          q: '6. Any regular driver under 25, <2 yrs license, or motoring convictions?',
+          a: qAns.driverConvictionsOrUnder25
+            ? `YES — ${qAns.driverDetails?.trim() || 'Details to be reviewed'}`
+            : 'NO',
+        },
+      ];
+
+      const boxHeight = rows.length * 18 + 14;
+      doc.rect(45, y, 505, boxHeight).fillAndStroke('#F8FAFC', '#E2E8F0');
+      let ry = y + 8;
+      for (const row of rows) {
+        doc
+          .fontSize(8)
+          .font('Helvetica')
+          .fillColor('#334155')
+          .text(row.q, 54, ry, { width: 300 });
+        doc
+          .font('Helvetica-Bold')
+          .fillColor(row.a.startsWith('YES') ? '#B45309' : '#0F172A')
+          .text(row.a, 360, ry, { width: 182, align: 'right' });
+        ry += 18;
+      }
+      y += boxHeight + 12;
+
+      if (quote.signedProposalFileName) {
+        doc
+          .fontSize(8.5)
+          .font('Helvetica-Bold')
+          .fillColor('#0369A1')
+          .text(`Signed Physical Proposal Attached: ${quote.signedProposalFileName}`, 45, y);
+        y += 16;
+      }
+
+      if (y > doc.page.height - 140) {
+        drawSandboxWatermark(doc);
+        doc.addPage();
+        y = 50;
+      }
+
+      doc
+        .fontSize(10)
+        .font('Helvetica-Bold')
+        .fillColor('#0F172A')
+        .text('AML / CFT & PROPOSAL DECLARATION', 45, y);
       y += 16;
       doc
         .fontSize(8.5)
         .font('Helvetica')
         .fillColor('#334155')
         .text(
-          'I/We hereby declare that the particulars given above are true and complete in every respect, and that I/We have not withheld any material information regarding the vehicle(s), actual usage, or prior claims history. In compliance with TIRA & FIU AML/CFT Regulations, this digital proposal forms the basis of the insurance contract.',
+          'I/We hereby declare that the particulars and questionnaire answers given above are true and complete in every respect, and that I/We have not withheld any material information regarding the vehicle(s), actual usage, or prior claims history. In compliance with TIRA & FIU AML/CFT Regulations, this proposal forms the basis of the insurance contract.',
           45,
           y,
           { width: 505 },
         );
-      y += 48;
+      y += 46;
       doc
         .fontSize(9)
         .font('Helvetica-Bold')

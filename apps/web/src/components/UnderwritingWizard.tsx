@@ -26,6 +26,7 @@ import type {
   CoverDuration,
   CoverType,
   InsurerProfile,
+  ProposalQuestionnaire,
   RatingCalculationResult,
   TonnageBand,
   VehicleClass,
@@ -41,6 +42,10 @@ import {
 import { StickerCard } from './StickerCard';
 import { PaymentPanel } from './PaymentPanel';
 import { InspectionPhotosPanel } from './InspectionPhotosPanel';
+import {
+  DEFAULT_PROPOSAL_ANSWERS,
+  ProposalQuestionnaireSection,
+} from './ProposalQuestionnaireSection';
 
 interface UnderwritingWizardProps {
   mode: 'BROKER' | 'CLIENT_APP';
@@ -154,6 +159,12 @@ export function UnderwritingWizard({
   const [ownerConfirmed, setOwnerConfirmed] = useState(true);
   const [proposalAccepted, setProposalAccepted] = useState(false);
   const [proposalSigner, setProposalSigner] = useState('');
+  const [proposalAnswers, setProposalAnswers] = useState<ProposalQuestionnaire>(
+    DEFAULT_PROPOSAL_ANSWERS,
+  );
+  const [pendingSignedProposalName, setPendingSignedProposalName] = useState('');
+  const [pendingSignedProposalUrl, setPendingSignedProposalUrl] = useState('');
+  const [removeSignedProposal, setRemoveSignedProposal] = useState(false);
 
   // Focus step heading on step change (Modern Web Guidance §11)
   useEffect(() => {
@@ -217,6 +228,10 @@ export function UnderwritingWizard({
     setOwnerRelationship(q.ownerRelationship || 'REGISTERED_OWNER');
     setOwnerConfirmed(q.ownerRelationshipConfirmed || true);
     setProposalAccepted(q.proposalAccepted);
+    setProposalAnswers({ ...DEFAULT_PROPOSAL_ANSWERS, ...(q.proposalAnswers ?? {}) });
+    setPendingSignedProposalName('');
+    setPendingSignedProposalUrl('');
+    setRemoveSignedProposal(false);
     if (q.firstLossPayee) {
       setIsFinanced(true);
       setFirstLossPayee(q.firstLossPayee);
@@ -528,9 +543,23 @@ export function UnderwritingWizard({
         firstLossPayee: isFinanced ? firstLossPayee : null,
         proposalAccepted,
         proposalSignedBy: proposalSigner || kycFullName,
+        proposalAnswers,
+        ...(removeSignedProposal
+          ? { removeSignedProposal: true }
+          : pendingSignedProposalUrl && pendingSignedProposalName
+            ? {
+                signedProposalFileName: pendingSignedProposalName,
+                signedProposalDataUrl: pendingSignedProposalUrl,
+              }
+            : {}),
       });
       setQuote(updated);
-      setStatusNotice('KYC & digital AML/CFT proposal saved.');
+      setPendingSignedProposalName('');
+      setPendingSignedProposalUrl('');
+      setRemoveSignedProposal(false);
+      setStatusNotice(
+        'KYC, Proposal Questionnaire & AML/CFT declaration saved — Proposal Form PDF is now auto-filled.',
+      );
     } catch (err) {
       setActionError((err as Error).message);
     } finally {
@@ -2092,6 +2121,30 @@ export function UnderwritingWizard({
                   </select>
                 </div>
               </div>
+
+              <ProposalQuestionnaireSection
+                quoteId={quote.id}
+                mode={mode}
+                answers={proposalAnswers}
+                onChange={setProposalAnswers}
+                existingSignedFileName={quote.signedProposalFileName ?? null}
+                hasExistingSignedUpload={Boolean(quote.hasSignedProposalUpload)}
+                pendingFileName={pendingSignedProposalName}
+                pendingFileDataUrl={pendingSignedProposalUrl}
+                markedForRemoval={removeSignedProposal}
+                onPickSignedFile={(fileName, dataUrl) => {
+                  setActionError(null);
+                  setPendingSignedProposalName(fileName);
+                  setPendingSignedProposalUrl(dataUrl);
+                  setRemoveSignedProposal(false);
+                }}
+                onClearSignedFile={() => {
+                  setPendingSignedProposalName('');
+                  setPendingSignedProposalUrl('');
+                  setRemoveSignedProposal(Boolean(quote.hasSignedProposalUpload));
+                }}
+                onError={(msg) => setActionError(msg)}
+              />
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <label className="flex cursor-pointer items-start gap-2.5 text-xs text-slate-700">

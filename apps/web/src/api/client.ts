@@ -9,6 +9,7 @@ import type {
   InsurerProfile,
   PaymentMethod,
   PaymentState,
+  ProposalQuestionnaire,
   RatingCalculationResult,
   TonnageBand,
   ValuationGuidance,
@@ -199,6 +200,9 @@ export interface HydratedQuote {
   proposalAccepted: boolean;
   proposalSignedBy: string | null;
   proposalSignedAt: string | null;
+  proposalAnswers?: ProposalQuestionnaire;
+  signedProposalFileName?: string | null;
+  hasSignedProposalUpload?: boolean;
   createdAt: string;
   updatedAt: string;
   readiness: {

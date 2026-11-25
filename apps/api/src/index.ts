@@ -20,6 +20,7 @@ import {
   normalizePlate,
   PaymentMethodSchema,
   PaymentStateSchema,
+  ProposalQuestionnaireSchema,
   RATE_SCHEDULE_SOURCE,
   RATE_SCHEDULE_VERSION,
   SEEDED_INSURERS,
@@ -249,8 +250,17 @@ async function hydrateQuote(quoteId: string) {
     }
   }
 
+  const parsedProposalAnswers = ProposalQuestionnaireSchema.safeParse(
+    JSON.parse(quote.proposalAnswersJson || '{}'),
+  );
+  const { signedProposalDataUrl: _omitSignedProposalBlob, ...quoteWithoutBlob } = quote;
+
   return {
-    ...quote,
+    ...quoteWithoutBlob,
+    proposalAnswers: parsedProposalAnswers.success
+      ? parsedProposalAnswers.data
+      : ProposalQuestionnaireSchema.parse({}),
+    hasSignedProposalUpload: Boolean(quote.signedProposalDataUrl),
     statusLabel: formatPolicyStatusLabel(quote.status as PolicyState),
     insurer,
     readiness: {
@@ -1125,6 +1135,18 @@ app.patch('/api/v1/quotes/:id/kyc-declaration', async (request, reply) => {
     firstLossPayee: z.string().optional().nullable(),
     proposalAccepted: z.boolean(),
     proposalSignedBy: z.string().optional(),
+    proposalAnswers: ProposalQuestionnaireSchema.optional(),
+    signedProposalFileName: z.string().max(180).optional().nullable(),
+    signedProposalDataUrl: z
+      .string()
+      .max(7 * 1024 * 1024, 'Signed proposal file must be under 5 MB.')
+      .refine(
+        (v) => v.startsWith('data:application/pdf;') || v.startsWith('data:image/'),
+        'Signed proposal must be a PDF or image file (JPG, PNG, WebP).',
+      )
+      .optional()
+      .nullable(),
+    removeSignedProposal: z.boolean().optional(),
   });
 
   const parsed = schema.safeParse(request.body);
@@ -1183,22 +1205,44 @@ app.patch('/api/v1/quotes/:id/kyc-declaration', async (request, reply) => {
       proposalSignedBy: d.proposalAccepted ? (d.proposalSignedBy?.trim() || d.fullName.trim()) : null,
       proposalSignedAt: d.proposalAccepted ? new Date() : null,
       proposalBrokerCountersign: quote.channel === 'BROKER' ? quote.brokerName : null,
+      ...(d.proposalAnswers ? { proposalAnswersJson: JSON.stringify(d.proposalAnswers) } : {}),
+      ...(d.removeSignedProposal
+        ? { signedProposalFileName: null, signedProposalDataUrl: null }
+        : d.signedProposalDataUrl && d.signedProposalFileName
+          ? {
+              signedProposalFileName: d.signedProposalFileName.trim(),
+              signedProposalDataUrl: d.signedProposalDataUrl,
+            }
+          : {}),
     },
   });
 
-  const hydrated = await hydrateQuote(id);
+  const [hydrated] = await Promise.all([
+    hydrateQuote(id),
+    recordAudit({
+      quoteId: id,
+      actor: d.fullName,
+      eventType: 'KYC_AND_PROPOSAL_UPDATED',
+      details: {
+        proposalAccepted: d.proposalAccepted,
+        idType: d.idType,
+        hasQuestionnaire: Boolean(d.proposalAnswers),
+        hasSignedPaperUpload: Boolean(
+          d.removeSignedProposal
+            ? false
+            : d.signedProposalDataUrl || quote.signedProposalDataUrl,
+        ),
+      },
+    }),
+  ]);
+
   if (hydrated?.readiness.issueReady && quote.status === 'QUOTED') {
     await prisma.quote.update({ where: { id }, data: { status: 'ISSUE_READY' } });
+    hydrated.status = 'ISSUE_READY';
+    hydrated.statusLabel = formatPolicyStatusLabel('ISSUE_READY');
   }
 
-  await recordAudit({
-    quoteId: id,
-    actor: d.fullName,
-    eventType: 'KYC_AND_PROPOSAL_UPDATED',
-    details: { proposalAccepted: d.proposalAccepted, idType: d.idType },
-  });
-
-  return hydrateQuote(id);
+  return sanitizeQuoteForScope(hydrated!, scope);
 });
 
 // ---------------------------------------------------------------------------
@@ -1784,6 +1828,42 @@ app.get('/api/v1/documents/quotes/:id/:docType.pdf', async (request, reply) => {
     .header('Content-Type', 'application/pdf')
     .header('Content-Disposition', `inline; filename="${quote.quoteNumber}-${docType}.pdf"`)
     .send(pdf);
+});
+
+app.get('/api/v1/documents/quotes/:id/signed-proposal', async (request, reply) => {
+  const user = request.uatUser!;
+  const { id } = request.params as { id: string };
+  const requestedScope = (request.query as { scope?: string }).scope;
+  const quote = await prisma.quote.findUnique({
+    where: { id },
+    include: { customer: true },
+  });
+  if (!quote) return reply.code(404).send({ error: 'Quote not found' });
+
+  const scope = resolveEffectiveScope(
+    user,
+    requestedScope ?? (quote.channel === 'CLIENT_APP' ? 'client' : 'broker'),
+  );
+  if (!canAccessQuoteRecord(quote, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to this document.' });
+  }
+  if (!quote.signedProposalDataUrl) {
+    return reply.code(404).send({ error: 'No signed paper proposal form uploaded for this quote.' });
+  }
+
+  const match = /^data:([^;]+);base64,(.+)$/.exec(quote.signedProposalDataUrl);
+  if (!match) {
+    return reply.code(500).send({ error: 'Stored proposal attachment is malformed.' });
+  }
+  const mimeType = match[1];
+  const buffer = Buffer.from(match[2], 'base64');
+  const safeName = (quote.signedProposalFileName || `${quote.quoteNumber}-signed-proposal`)
+    .replace(/[^a-zA-Z0-9._-]/g, '_');
+
+  return reply
+    .header('Content-Type', mimeType)
+    .header('Content-Disposition', `inline; filename="${safeName}"`)
+    .send(buffer);
 });
 
 app.get('/api/v1/documents/policies/:id/cover-note.pdf', async (request, reply) => {

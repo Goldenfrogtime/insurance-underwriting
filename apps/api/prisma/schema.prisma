@@ -86,6 +86,9 @@ model Quote {
   proposalSignedBy           String?
   proposalSignedAt           DateTime?
   proposalBrokerCountersign  String?
+  proposalAnswersJson        String    @default("{}")
+  signedProposalFileName     String?
+  signedProposalDataUrl      String?
 
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt

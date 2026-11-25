@@ -91,6 +91,22 @@ export const CoverDurationSchema = z.enum([
 ]);
 export type CoverDuration = z.infer<typeof CoverDurationSchema>;
 
+export const ProposalQuestionnaireSchema = z.object({
+  previousInsurer: z.string().max(120).optional().default(''),
+  overnightParking: z
+    .enum(['LOCKED_GARAGE', 'GATED_COMPOUND', 'STREET_OR_PUBLIC', 'COMMERCIAL_YARD'])
+    .default('GATED_COMPOUND'),
+  priorDeclinedOrCancelled: z.boolean().default(false),
+  priorDeclinedDetails: z.string().max(300).optional().default(''),
+  accidentsOrLossesLast3Years: z.boolean().default(false),
+  accidentsDetails: z.string().max(300).optional().default(''),
+  vehicleModifiedOrDefective: z.boolean().default(false),
+  modificationDetails: z.string().max(300).optional().default(''),
+  driverConvictionsOrUnder25: z.boolean().default(false),
+  driverDetails: z.string().max(300).optional().default(''),
+});
+export type ProposalQuestionnaire = z.infer<typeof ProposalQuestionnaireSchema>;
+
 export const AddOnsSelectionSchema = z.object({
   excessBuyBack: z.boolean().default(false),
   pvt: z.boolean().default(false),
