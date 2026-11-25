@@ -18,6 +18,17 @@ declare module 'fastify' {
 
 const COOKIE_NAME = 'cf_uat_session';
 const SESSION_TTL_HOURS = 24 * 7; // 7 days
+const AUTH_CACHE_TTL_MS = 15_000; // Short TTL to eliminate cross-region DB RTTs on active sessions
+
+const sessionCache = new Map<string, { user: UatUser; cachedAt: number; sessionExpiresAt: number }>();
+
+function clearAuthCache(token?: string) {
+  if (token) {
+    sessionCache.delete(token);
+  } else {
+    sessionCache.clear();
+  }
+}
 
 function parseCookies(cookieHeader?: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -68,21 +79,32 @@ async function resolveUatUser(request: FastifyRequest): Promise<{
     return { error: { status: 401, message: 'Sign in with an approved Gmail account to access CoverFlow UAT.' } };
   }
 
+  const nowMs = Date.now();
+  const cached = sessionCache.get(token);
+  if (cached && nowMs - cached.cachedAt < AUTH_CACHE_TTL_MS && cached.sessionExpiresAt > nowMs) {
+    return { user: cached.user };
+  }
+
   const session = await prisma.uatSession.findUnique({ where: { token } });
   if (!session || session.expiresAt < new Date()) {
+    sessionCache.delete(token);
     return { error: { status: 401, message: 'Your UAT session expired. Please sign in again.' } };
   }
 
-  const tester = await prisma.allowedTester.findUnique({ where: { email: session.email } });
+  const [tester, settings] = await Promise.all([
+    prisma.allowedTester.findUnique({ where: { email: session.email } }),
+    prisma.uatSettings.findUnique({ where: { id: 'singleton' } }),
+  ]);
   if (!tester || !tester.active) {
+    sessionCache.delete(token);
     return { error: { status: 403, message: 'Access for this email has been revoked by the CoverFlow team.' } };
   }
   if (tester.expiresAt && tester.expiresAt < new Date()) {
+    sessionCache.delete(token);
     return { error: { status: 403, message: 'Your UAT access window has expired.' } };
   }
-
-  const settings = await prisma.uatSettings.findUnique({ where: { id: 'singleton' } });
   if (settings && !settings.testingOpen && tester.role !== 'ADMIN') {
+    sessionCache.delete(token);
     return {
       error: {
         status: 403,
@@ -91,14 +113,18 @@ async function resolveUatUser(request: FastifyRequest): Promise<{
     };
   }
 
-  return {
-    user: {
-      email: tester.email,
-      name: tester.name,
-      organization: tester.organization,
-      role: tester.role as 'ADMIN' | 'BROKER_TESTER' | 'CLIENT_USER',
-    },
+  const user: UatUser = {
+    email: tester.email,
+    name: tester.name,
+    organization: tester.organization,
+    role: tester.role as 'ADMIN' | 'BROKER_TESTER' | 'CLIENT_USER',
   };
+  sessionCache.set(token, {
+    user,
+    cachedAt: nowMs,
+    sessionExpiresAt: session.expiresAt.getTime(),
+  });
+  return { user };
 }
 
 function csvEscape(v: unknown): string {
@@ -270,6 +296,7 @@ export async function registerUatModule(app: FastifyInstance) {
   app.post('/api/v1/uat/logout', async (request, reply) => {
     const token = getSessionToken(request);
     if (token) {
+      clearAuthCache(token);
       await prisma.uatSession.deleteMany({ where: { token } });
     }
     clearSessionCookie(reply);
@@ -373,6 +400,7 @@ export async function registerUatModule(app: FastifyInstance) {
           : {}),
       },
     });
+    clearAuthCache();
     return {
       settings: {
         testingOpen: updated.testingOpen,
@@ -417,6 +445,7 @@ export async function registerUatModule(app: FastifyInstance) {
       },
     });
 
+    clearAuthCache();
     return reply.code(201).send({ tester });
   });
 
@@ -448,6 +477,7 @@ export async function registerUatModule(app: FastifyInstance) {
     });
 
     // Immediately terminate active sessions if revoked
+    clearAuthCache();
     if (parsed.data.active === false) {
       await prisma.uatSession.deleteMany({ where: { email: existing.email } });
     }
@@ -463,6 +493,7 @@ export async function registerUatModule(app: FastifyInstance) {
     if (existing.email === request.uatUser?.email) {
       return reply.code(400).send({ error: 'Cannot delete your own admin account.' });
     }
+    clearAuthCache();
     await prisma.uatSession.deleteMany({ where: { email: existing.email } });
     await prisma.allowedTester.delete({ where: { id } });
     return { deleted: true };

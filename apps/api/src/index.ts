@@ -1297,56 +1297,64 @@ app.post('/api/v1/quotes/:id/payments/initiate', async (request, reply) => {
     payerName: hydrated.customer?.fullName ?? 'Proposer',
   });
 
-  const tx = await prisma.paymentTransaction.create({
-    data: {
-      quoteId: hydrated.id,
-      controlNumber: init.controlNumber,
-      providerReference: init.providerReference,
-      method: parsed.data.method,
-      mobileNetwork: parsed.data.mobileNetwork ?? null,
-      bankName: parsed.data.bankName?.trim() || null,
-      depositorReference: parsed.data.depositorReference?.trim() || null,
-      proofFileName: parsed.data.proofFileName?.trim() || null,
-      proofDataUrl: parsed.data.proofDataUrl ?? null,
-      amountTzs: hydrated.totalPayableTzs,
-      payerPhone: parsed.data.payerPhone ?? hydrated.customer?.phone ?? null,
-      state: init.state,
-      instructions: init.instructions,
-      statusMessage:
+  const [tx] = await Promise.all([
+    prisma.paymentTransaction.create({
+      data: {
+        quoteId: hydrated.id,
+        controlNumber: init.controlNumber,
+        providerReference: init.providerReference,
+        method: parsed.data.method,
+        mobileNetwork: parsed.data.mobileNetwork ?? null,
+        bankName: parsed.data.bankName?.trim() || null,
+        depositorReference: parsed.data.depositorReference?.trim() || null,
+        proofFileName: parsed.data.proofFileName?.trim() || null,
+        proofDataUrl: parsed.data.proofDataUrl ?? null,
+        amountTzs: hydrated.totalPayableTzs,
+        payerPhone: parsed.data.payerPhone ?? hydrated.customer?.phone ?? null,
+        state: init.state,
+        instructions: init.instructions,
+        statusMessage:
+          parsed.data.method === 'DIRECT_BANK_DEPOSIT'
+            ? 'Bank deposit recorded — awaiting authoritative insurer finance reconciliation (slip alone does not auto-issue).'
+            : 'Awaiting authoritative payment confirmation.',
+        expiresAt: new Date(init.expiresAt),
+      },
+    }),
+    prisma.quote.update({
+      where: { id },
+      data: { status: 'PAYMENT_PENDING' },
+    }),
+    recordAudit({
+      quoteId: id,
+      actor: 'PaymentGateway',
+      eventType:
         parsed.data.method === 'DIRECT_BANK_DEPOSIT'
-          ? 'Bank deposit recorded — awaiting authoritative insurer finance reconciliation (slip alone does not auto-issue).'
-          : 'Awaiting authoritative payment confirmation.',
-      expiresAt: new Date(init.expiresAt),
-    },
-  });
+          ? 'DIRECT_BANK_DEPOSIT_SUBMITTED'
+          : 'PAYMENT_CONTROL_NUMBER_CREATED',
+      fromState: hydrated.status,
+      toState: 'PAYMENT_PENDING',
+      details: {
+        controlNumber: init.controlNumber,
+        method: parsed.data.method,
+        bankName: parsed.data.bankName?.trim() || null,
+        depositorReference: parsed.data.depositorReference?.trim() || null,
+        hasProofUpload: Boolean(parsed.data.proofDataUrl),
+        amountTzs: hydrated.totalPayableTzs,
+      },
+    }),
+  ]);
 
-  await prisma.quote.update({
-    where: { id },
-    data: { status: 'PAYMENT_PENDING' },
-  });
-
-  await recordAudit({
-    quoteId: id,
-    actor: 'PaymentGateway',
-    eventType:
-      parsed.data.method === 'DIRECT_BANK_DEPOSIT'
-        ? 'DIRECT_BANK_DEPOSIT_SUBMITTED'
-        : 'PAYMENT_CONTROL_NUMBER_CREATED',
-    fromState: hydrated.status,
-    toState: 'PAYMENT_PENDING',
-    details: {
-      controlNumber: tx.controlNumber,
-      method: tx.method,
-      bankName: tx.bankName,
-      depositorReference: tx.depositorReference,
-      hasProofUpload: Boolean(tx.proofDataUrl),
-      amountTzs: tx.amountTzs,
-    },
-  });
+  // Avoid a redundant second hydrateQuote() round-trip across the DB
+  const updatedHydrated = {
+    ...hydrated,
+    status: 'PAYMENT_PENDING',
+    statusLabel: formatPolicyStatusLabel('PAYMENT_PENDING'),
+    payments: [tx, ...hydrated.payments],
+  };
 
   return {
     payment: tx,
-    quote: sanitizeQuoteForScope((await hydrateQuote(id))!, scope),
+    quote: sanitizeQuoteForScope(updatedHydrated, scope),
   };
 });
 
@@ -1377,22 +1385,23 @@ app.post('/api/v1/payments/:controlNumber/proof', async (request, reply) => {
     return reply.code(403).send({ error: 'You do not have access to this payment transaction.' });
   }
 
-  const updatedTx = await prisma.paymentTransaction.update({
-    where: { controlNumber },
-    data: {
-      depositorReference: parsed.data.depositorReference?.trim() || tx.depositorReference,
-      proofFileName: parsed.data.proofFileName,
-      proofDataUrl: parsed.data.proofDataUrl,
-      statusMessage: 'Deposit slip uploaded — awaiting insurer bank confirmation.',
-    },
-  });
-
-  await recordAudit({
-    quoteId: tx.quoteId,
-    actor: user.email,
-    eventType: 'BANK_DEPOSIT_SLIP_UPLOADED',
-    details: { controlNumber, proofFileName: parsed.data.proofFileName },
-  });
+  const [updatedTx] = await Promise.all([
+    prisma.paymentTransaction.update({
+      where: { controlNumber },
+      data: {
+        depositorReference: parsed.data.depositorReference?.trim() || tx.depositorReference,
+        proofFileName: parsed.data.proofFileName,
+        proofDataUrl: parsed.data.proofDataUrl,
+        statusMessage: 'Deposit slip uploaded — awaiting insurer bank confirmation.',
+      },
+    }),
+    recordAudit({
+      quoteId: tx.quoteId,
+      actor: user.email,
+      eventType: 'BANK_DEPOSIT_SLIP_UPLOADED',
+      details: { controlNumber, proofFileName: parsed.data.proofFileName },
+    }),
+  ]);
 
   return {
     payment: updatedTx,
@@ -1426,16 +1435,6 @@ app.post('/api/v1/payments/:controlNumber/simulate', async (request, reply) => {
   adapters.payment.setSimulatedState(controlNumber, parsed.data.state);
   const status = await adapters.payment.checkPaymentStatus(controlNumber);
 
-  const updatedTx = await prisma.paymentTransaction.update({
-    where: { controlNumber },
-    data: {
-      state: status.state,
-      providerReceiptNo: status.providerReceiptNo ?? null,
-      clearedAt: status.clearedAt ? new Date(status.clearedAt) : null,
-      statusMessage: status.message,
-    },
-  });
-
   const nextQuoteState: PolicyState =
     status.state === 'CONFIRMED'
       ? 'PAYMENT_CONFIRMED'
@@ -1443,22 +1442,32 @@ app.post('/api/v1/payments/:controlNumber/simulate', async (request, reply) => {
         ? 'PAYMENT_REVERSED'
         : 'PAYMENT_PENDING';
 
-  await prisma.quote.update({
-    where: { id: tx.quoteId },
-    data: { status: nextQuoteState },
-  });
-
-  await recordAudit({
-    quoteId: tx.quoteId,
-    actor: 'PaymentWebhook (Simulated)',
-    eventType: `PAYMENT_${status.state}`,
-    toState: nextQuoteState,
-    details: { controlNumber, receipt: status.providerReceiptNo, message: status.message },
-  });
+  const [updatedTx] = await Promise.all([
+    prisma.paymentTransaction.update({
+      where: { controlNumber },
+      data: {
+        state: status.state,
+        providerReceiptNo: status.providerReceiptNo ?? null,
+        clearedAt: status.clearedAt ? new Date(status.clearedAt) : null,
+        statusMessage: status.message,
+      },
+    }),
+    prisma.quote.update({
+      where: { id: tx.quoteId },
+      data: { status: nextQuoteState },
+    }),
+    recordAudit({
+      quoteId: tx.quoteId,
+      actor: 'PaymentWebhook (Simulated)',
+      eventType: `PAYMENT_${status.state}`,
+      toState: nextQuoteState,
+      details: { controlNumber, receipt: status.providerReceiptNo, message: status.message },
+    }),
+  ]);
 
   return {
     payment: updatedTx,
-    quote: await hydrateQuote(tx.quoteId),
+    quote: sanitizeQuoteForScope((await hydrateQuote(tx.quoteId))!, scope),
   };
 });
 

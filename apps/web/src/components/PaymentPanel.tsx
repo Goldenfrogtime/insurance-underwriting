@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Building2,
   Check,
@@ -131,6 +131,7 @@ export function PaymentPanel({
   const [proofDataUrl, setProofDataUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const activePaymentCardRef = useRef<HTMLDivElement>(null);
 
   const latestPayment = quote.payments[0];
   const isBusy = busy || actionBusy;
@@ -176,6 +177,9 @@ export function PaymentPanel({
           ? `Direct Bank Deposit (${res.payment.controlNumber}) recorded. Awaiting insurer bank confirmation.`
           : `Payment Control Number ${res.payment.controlNumber} generated. Follow the step-by-step guide below to pay.`,
       );
+      setTimeout(() => {
+        activePaymentCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 60);
     } catch (err) {
       onError((err as Error).message);
     } finally {
@@ -227,8 +231,8 @@ export function PaymentPanel({
             ? `Request Insurer Credit Clearance · ${formatTzs(quote.totalPayableTzs)}`
             : `Proceed to Card Checkout · ${formatTzs(quote.totalPayableTzs)}`;
 
-  const activeNet: MobileNetwork =
-    (latestPayment?.mobileNetwork as MobileNetwork) || mobileNetwork;
+  // Always honor the user's currently clicked mobile operator immediately (0ms)
+  const activeNet: MobileNetwork = mobileNetwork;
   const netGuide = NETWORK_GUIDES[activeNet];
 
   return (
@@ -331,6 +335,55 @@ export function PaymentPanel({
               </button>
             ))}
           </div>
+
+          {/* Instant 0ms Preview of "How to Pay" as soon as an operator is clicked */}
+          {!latestPayment && (
+            <div className="mt-3 rounded-xl border border-sky-200 bg-white p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-extrabold text-slate-900">
+                  {guideLang === 'SW'
+                    ? `Jinsi ya Kulipia — ${netGuide.name}`
+                    : `How to Pay — ${netGuide.name}`}
+                </span>
+                <div className="inline-flex rounded-lg bg-slate-100 p-0.5 text-[11px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setGuideLang('SW')}
+                    className={`rounded-md px-2 py-0.5 ${
+                      guideLang === 'SW' ? 'bg-white text-sky-800 shadow-sm' : 'text-slate-500'
+                    }`}
+                  >
+                    Kiswahili
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGuideLang('EN')}
+                    className={`rounded-md px-2 py-0.5 ${
+                      guideLang === 'EN' ? 'bg-white text-sky-800 shadow-sm' : 'text-slate-500'
+                    }`}
+                  >
+                    English
+                  </button>
+                </div>
+              </div>
+              <ol className="mt-2 list-decimal space-y-1 pl-4 text-[11px] text-slate-700">
+                {(guideLang === 'SW'
+                  ? netGuide.swSteps(
+                      bizNumber,
+                      '(Namba ya Kumbukumbu itatolewa chini)',
+                      formatTzs(quote.totalPayableTzs),
+                    )
+                  : netGuide.enSteps(
+                      bizNumber,
+                      '(Control No. generated below)',
+                      formatTzs(quote.totalPayableTzs),
+                    )
+                ).map((stepText) => (
+                  <li key={stepText}>{stepText}</li>
+                ))}
+              </ol>
+            </div>
+          )}
         </div>
       )}
 
@@ -448,7 +501,10 @@ export function PaymentPanel({
 
       {/* Active Payment Card + Self-Service Guide (EN / SW) */}
       {latestPayment && (
-        <div className="space-y-3.5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <div
+          ref={activePaymentCardRef}
+          className="space-y-3.5 rounded-xl border border-slate-200 bg-slate-50 p-4"
+        >
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
               {latestPayment.method === 'DIRECT_BANK_DEPOSIT'
