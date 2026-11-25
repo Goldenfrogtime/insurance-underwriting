@@ -472,9 +472,9 @@ export function PaymentPanel({
               <input
                 id="bank-slip-file"
                 type="file"
-                accept="image/*,application/pdf"
+                accept=".pdf,application/pdf,image/*"
                 onChange={(e) => handleFilePicked(e.target.files?.[0] ?? null)}
-                className="visually-hidden"
+                className="hidden"
               />
               {proofDataUrl && proofDataUrl.startsWith('data:image/') && (
                 <img

@@ -17,7 +17,7 @@
     font-size: max(1rem, 1em);
   }
 
-  input:not([type="checkbox"]):not([type="radio"]),
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
   select {
     min-height: 48px;
   }

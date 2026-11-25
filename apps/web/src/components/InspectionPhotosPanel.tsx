@@ -390,10 +390,12 @@ export function InspectionPhotosPanel({
                 disabled={actionBusy || isUploading || fillingSamples}
                 onChange={(e) => {
                   const picked = e.target.files?.[0] ?? null;
-                  e.target.value = '';
-                  void handleFileChange(slot.angle, slot.label, picked);
+                  const el = e.target;
+                  void handleFileChange(slot.angle, slot.label, picked).finally(() => {
+                    el.value = '';
+                  });
                 }}
-                className="visually-hidden"
+                className="hidden"
               />
 
               {existing ? (
