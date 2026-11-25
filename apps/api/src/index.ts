@@ -1251,9 +1251,14 @@ app.post('/api/v1/quotes/:id/payments/initiate', async (request, reply) => {
     .object({
       method: PaymentMethodSchema.default('MOBILE_MONEY'),
       payerPhone: z.string().optional(),
+      mobileNetwork: z.enum(['MPESA', 'MIXX_YAS', 'AIRTEL_MONEY', 'HALOPESA']).optional(),
+      bankName: z.string().optional(),
+      depositorReference: z.string().optional(),
+      proofFileName: z.string().optional(),
+      proofDataUrl: z.string().optional(),
     })
     .safeParse(request.body);
-  if (!parsed.success) return reply.code(400).send({ error: 'Invalid payment method' });
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid payment payload' });
 
   const user = request.uatUser!;
   const hydrated = await hydrateQuote(id);
@@ -1273,6 +1278,15 @@ app.post('/api/v1/quotes/:id/payments/initiate', async (request, reply) => {
     });
   }
 
+  if (
+    parsed.data.method === 'DIRECT_BANK_DEPOSIT' &&
+    !parsed.data.bankName?.trim()
+  ) {
+    return reply.code(400).send({
+      error: 'Select the insurer bank you deposited into (e.g. CRDB, NMB, or NBC).',
+    });
+  }
+
   const init = await adapters.payment.initiatePayment({
     quoteId: hydrated.id,
     quoteNumber: hydrated.quoteNumber,
@@ -1289,11 +1303,19 @@ app.post('/api/v1/quotes/:id/payments/initiate', async (request, reply) => {
       controlNumber: init.controlNumber,
       providerReference: init.providerReference,
       method: parsed.data.method,
+      mobileNetwork: parsed.data.mobileNetwork ?? null,
+      bankName: parsed.data.bankName?.trim() || null,
+      depositorReference: parsed.data.depositorReference?.trim() || null,
+      proofFileName: parsed.data.proofFileName?.trim() || null,
+      proofDataUrl: parsed.data.proofDataUrl ?? null,
       amountTzs: hydrated.totalPayableTzs,
       payerPhone: parsed.data.payerPhone ?? hydrated.customer?.phone ?? null,
       state: init.state,
       instructions: init.instructions,
-      statusMessage: 'Awaiting authoritative payment confirmation.',
+      statusMessage:
+        parsed.data.method === 'DIRECT_BANK_DEPOSIT'
+          ? 'Bank deposit recorded — awaiting authoritative insurer finance reconciliation (slip alone does not auto-issue).'
+          : 'Awaiting authoritative payment confirmation.',
       expiresAt: new Date(init.expiresAt),
     },
   });
@@ -1306,15 +1328,75 @@ app.post('/api/v1/quotes/:id/payments/initiate', async (request, reply) => {
   await recordAudit({
     quoteId: id,
     actor: 'PaymentGateway',
-    eventType: 'PAYMENT_CONTROL_NUMBER_CREATED',
+    eventType:
+      parsed.data.method === 'DIRECT_BANK_DEPOSIT'
+        ? 'DIRECT_BANK_DEPOSIT_SUBMITTED'
+        : 'PAYMENT_CONTROL_NUMBER_CREATED',
     fromState: hydrated.status,
     toState: 'PAYMENT_PENDING',
-    details: { controlNumber: tx.controlNumber, method: tx.method, amountTzs: tx.amountTzs },
+    details: {
+      controlNumber: tx.controlNumber,
+      method: tx.method,
+      bankName: tx.bankName,
+      depositorReference: tx.depositorReference,
+      hasProofUpload: Boolean(tx.proofDataUrl),
+      amountTzs: tx.amountTzs,
+    },
   });
 
   return {
     payment: tx,
-    quote: await hydrateQuote(id),
+    quote: sanitizeQuoteForScope((await hydrateQuote(id))!, scope),
+  };
+});
+
+// Upload or update Bank Deposit Slip / Proof of Payment (stays PENDING until insurer confirms)
+app.post('/api/v1/payments/:controlNumber/proof', async (request, reply) => {
+  const user = request.uatUser!;
+  const { controlNumber } = request.params as { controlNumber: string };
+  const parsed = z
+    .object({
+      depositorReference: z.string().optional(),
+      proofFileName: z.string().min(1),
+      proofDataUrl: z.string().min(10),
+    })
+    .safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'Valid deposit slip file is required.' });
+
+  const tx = await prisma.paymentTransaction.findUnique({
+    where: { controlNumber },
+    include: { quote: { include: { customer: true } } },
+  });
+  if (!tx) return reply.code(404).send({ error: 'Payment transaction not found' });
+
+  const scope = resolveEffectiveScope(
+    user,
+    tx.quote.channel === 'CLIENT_APP' ? 'client' : 'broker',
+  );
+  if (!canAccessQuoteRecord(tx.quote, user, scope)) {
+    return reply.code(403).send({ error: 'You do not have access to this payment transaction.' });
+  }
+
+  const updatedTx = await prisma.paymentTransaction.update({
+    where: { controlNumber },
+    data: {
+      depositorReference: parsed.data.depositorReference?.trim() || tx.depositorReference,
+      proofFileName: parsed.data.proofFileName,
+      proofDataUrl: parsed.data.proofDataUrl,
+      statusMessage: 'Deposit slip uploaded — awaiting insurer bank confirmation.',
+    },
+  });
+
+  await recordAudit({
+    quoteId: tx.quoteId,
+    actor: user.email,
+    eventType: 'BANK_DEPOSIT_SLIP_UPLOADED',
+    details: { controlNumber, proofFileName: parsed.data.proofFileName },
+  });
+
+  return {
+    payment: updatedTx,
+    quote: sanitizeQuoteForScope((await hydrateQuote(tx.quoteId))!, scope),
   };
 });
 

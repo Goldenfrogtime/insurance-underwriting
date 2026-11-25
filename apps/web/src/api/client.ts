@@ -211,6 +211,11 @@ export interface HydratedQuote {
     controlNumber: string;
     providerReference: string;
     method: PaymentMethod;
+    mobileNetwork: 'MPESA' | 'MIXX_YAS' | 'AIRTEL_MONEY' | 'HALOPESA' | null;
+    bankName: string | null;
+    depositorReference: string | null;
+    proofFileName: string | null;
+    proofDataUrl: string | null;
     amountTzs: number;
     payerPhone: string | null;
     state: PaymentState;
@@ -348,12 +353,34 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  initiatePayment: (quoteId: string, method: PaymentMethod, payerPhone?: string) =>
+  initiatePayment: (
+    quoteId: string,
+    payload: {
+      method: PaymentMethod;
+      payerPhone?: string;
+      mobileNetwork?: 'MPESA' | 'MIXX_YAS' | 'AIRTEL_MONEY' | 'HALOPESA';
+      bankName?: string;
+      depositorReference?: string;
+      proofFileName?: string;
+      proofDataUrl?: string;
+    },
+  ) =>
     apiFetch<{ payment: HydratedQuote['payments'][0]; quote: HydratedQuote }>(
       `/quotes/${quoteId}/payments/initiate`,
       {
         method: 'POST',
-        body: JSON.stringify({ method, payerPhone }),
+        body: JSON.stringify(payload),
+      },
+    ),
+  uploadPaymentProof: (
+    controlNumber: string,
+    payload: { depositorReference?: string; proofFileName: string; proofDataUrl: string },
+  ) =>
+    apiFetch<{ payment: HydratedQuote['payments'][0]; quote: HydratedQuote }>(
+      `/payments/${encodeURIComponent(controlNumber)}/proof`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
       },
     ),
   simulatePayment: (controlNumber: string, state: PaymentState) =>

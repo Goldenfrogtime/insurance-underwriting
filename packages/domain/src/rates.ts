@@ -24,6 +24,15 @@ export const SHORT_PERIOD_FACTORS: Record<CoverDuration, { factor: number; label
   SHORT_7_TO_8M: { factor: 0.9, label: 'Short Period (7–8 Months — 90%)' },
 };
 
+export interface InsurerBankAccount {
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+  branch: string;
+  currency: 'TZS';
+  swiftCode: string;
+}
+
 export interface InsurerProfile {
   code: string;
   name: string;
@@ -39,6 +48,8 @@ export interface InsurerProfile {
   windscreenRatePct: number;
   accessoriesRatePct: number;
   tagline: string;
+  mobileBusinessNumber: string;
+  bankAccounts: InsurerBankAccount[];
 }
 
 const ALL_CLASSES: VehicleClass[] = [
@@ -76,6 +87,33 @@ export const SEEDED_INSURERS: InsurerProfile[] = [
     windscreenRatePct: 10,
     accessoriesRatePct: 5,
     tagline: 'Direct TIRA MIS integration · Fast comprehensive & fleet bind',
+    mobileBusinessNumber: '400801',
+    bankAccounts: [
+      {
+        bankName: 'CRDB Bank Plc',
+        accountName: 'MUA Insurance (Tanzania) Ltd — Premium Collection (UAT)',
+        accountNumber: '0150241890100',
+        branch: 'Azikiwe Premier, Dar es Salaam',
+        currency: 'TZS',
+        swiftCode: 'CORUTZTZ',
+      },
+      {
+        bankName: 'NMB Bank Plc',
+        accountName: 'MUA Insurance (Tanzania) Ltd — Premium Collection (UAT)',
+        accountNumber: '20110048291',
+        branch: 'Ohio Street, Dar es Salaam',
+        currency: 'TZS',
+        swiftCode: 'NMIBTZTZ',
+      },
+      {
+        bankName: 'NBC Limited',
+        accountName: 'MUA Insurance (Tanzania) Ltd — Premium Collection (UAT)',
+        accountNumber: '011103049210',
+        branch: 'Corporate Branch, Dar es Salaam',
+        currency: 'TZS',
+        swiftCode: 'NLCBTZTZ',
+      },
+    ],
   },
   {
     code: 'SANLAM_ALLIANZ_TZ',
@@ -92,6 +130,25 @@ export const SEEDED_INSURERS: InsurerProfile[] = [
     windscreenRatePct: 10,
     accessoriesRatePct: 5,
     tagline: 'Pan-African cover · Recommended for high-value & corporate fleets',
+    mobileBusinessNumber: '400802',
+    bankAccounts: [
+      {
+        bankName: 'CRDB Bank Plc',
+        accountName: 'Sanlam Allianz General Insurance (TZ) Ltd (UAT)',
+        accountNumber: '0150388210400',
+        branch: 'Holland House, Dar es Salaam',
+        currency: 'TZS',
+        swiftCode: 'CORUTZTZ',
+      },
+      {
+        bankName: 'NMB Bank Plc',
+        accountName: 'Sanlam Allianz General Insurance (TZ) Ltd (UAT)',
+        accountNumber: '20110077412',
+        branch: 'Head Office, Dar es Salaam',
+        currency: 'TZS',
+        swiftCode: 'NMIBTZTZ',
+      },
+    ],
   },
   {
     code: 'MAYFAIR_TZ',
@@ -108,6 +165,25 @@ export const SEEDED_INSURERS: InsurerProfile[] = [
     windscreenRatePct: 10,
     accessoriesRatePct: 5,
     tagline: 'Quick private motor, commercial goods & PSV issuance',
+    mobileBusinessNumber: '400803',
+    bankAccounts: [
+      {
+        bankName: 'CRDB Bank Plc',
+        accountName: 'Mayfair Insurance Company Tanzania Ltd (UAT)',
+        accountNumber: '0150552910800',
+        branch: 'Upanga Branch, Dar es Salaam',
+        currency: 'TZS',
+        swiftCode: 'CORUTZTZ',
+      },
+      {
+        bankName: 'NBC Limited',
+        accountName: 'Mayfair Insurance Company Tanzania Ltd (UAT)',
+        accountNumber: '011103088140',
+        branch: 'Samora Branch, Dar es Salaam',
+        currency: 'TZS',
+        swiftCode: 'NLCBTZTZ',
+      },
+    ],
   },
   {
     code: 'NEWTAN_TZ',
@@ -124,6 +200,25 @@ export const SEEDED_INSURERS: InsurerProfile[] = [
     windscreenRatePct: 10,
     accessoriesRatePct: 5,
     tagline: 'Commercial logistics, oil tankers & comprehensive motor',
+    mobileBusinessNumber: '400804',
+    bankAccounts: [
+      {
+        bankName: 'CRDB Bank Plc',
+        accountName: 'Newtan Insurance Limited — Premium Trust (UAT)',
+        accountNumber: '0150774129300',
+        branch: 'Kurasini, Dar es Salaam',
+        currency: 'TZS',
+        swiftCode: 'CORUTZTZ',
+      },
+      {
+        bankName: 'NMB Bank Plc',
+        accountName: 'Newtan Insurance Limited — Premium Trust (UAT)',
+        accountNumber: '20110099124',
+        branch: 'Bank House, Dar es Salaam',
+        currency: 'TZS',
+        swiftCode: 'NMIBTZTZ',
+      },
+    ],
   },
 ];
 

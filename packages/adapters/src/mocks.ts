@@ -538,24 +538,29 @@ export class MockPaymentGatewayAdapter implements PaymentGatewayAdapter {
 
   async initiatePayment(req: PaymentInitRequest): Promise<PaymentInitResult> {
     const rand = Math.floor(1000000 + Math.random() * 8999999);
-    const controlNumber = `CF${rand}`;
+    const controlNumber = req.method === 'DIRECT_BANK_DEPOSIT' ? `DEP${rand}` : `CF${rand}`;
     const providerReference = `PAY-${req.quoteNumber}-${rand}`;
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
     const state: PaymentState = 'PENDING';
     this.store.set(controlNumber, {
       state,
-      message: `Awaiting authoritative payment confirmation for Control Number ${controlNumber}.`,
+      message:
+        req.method === 'DIRECT_BANK_DEPOSIT'
+          ? `Direct bank deposit slip logged (${controlNumber}). Awaiting insurer finance confirmation.`
+          : `Awaiting authoritative payment confirmation for Control Number ${controlNumber}.`,
     });
 
     const instructions =
       req.method === 'MOBILE_MONEY'
-        ? `Pay TZS ${req.amountTzs.toLocaleString()} via M-Pesa / Mixx by Yas / Airtel Money using Control Number ${controlNumber}.`
-        : req.method === 'CONTROL_NUMBER_BANK'
-          ? `Deposit TZS ${req.amountTzs.toLocaleString()} at CRDB / NMB / NBC using Control Number ${controlNumber}.`
-          : req.method === 'CORPORATE_CREDIT'
-            ? `Corporate credit clearance requested with ${req.insurerCode} for TZS ${req.amountTzs.toLocaleString()} (Ref ${controlNumber}).`
-            : `Complete Visa / Mastercard checkout for TZS ${req.amountTzs.toLocaleString()} (Ref ${controlNumber}).`;
+        ? `Pay TZS ${req.amountTzs.toLocaleString()} via M-Pesa, Mixx by Yas, Airtel Money, or HaloPesa using Control Number ${controlNumber}.`
+        : req.method === 'DIRECT_BANK_DEPOSIT'
+          ? `Deposit TZS ${req.amountTzs.toLocaleString()} directly into the insurer's bank account (Ref: ${req.quoteNumber}) and upload your bank deposit slip / EFT receipt.`
+          : req.method === 'CONTROL_NUMBER_BANK'
+            ? `Deposit TZS ${req.amountTzs.toLocaleString()} at CRDB / NMB / NBC or Bank Wakala using Control Number ${controlNumber}.`
+            : req.method === 'CORPORATE_CREDIT'
+              ? `Corporate credit clearance requested with ${req.insurerCode} for TZS ${req.amountTzs.toLocaleString()} (Ref ${controlNumber}).`
+              : `Complete Visa / Mastercard checkout for TZS ${req.amountTzs.toLocaleString()} (Ref ${controlNumber}).`;
 
     return {
       controlNumber,

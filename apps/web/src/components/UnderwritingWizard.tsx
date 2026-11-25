@@ -10,11 +10,8 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  Copy,
-  CreditCard,
   Download,
   FileCheck2,
-  Landmark,
   Loader2,
   Plus,
   RefreshCw,
@@ -30,7 +27,6 @@ import type {
   CoverDuration,
   CoverType,
   InsurerProfile,
-  PaymentMethod,
   RatingCalculationResult,
   TonnageBand,
   VehicleClass,
@@ -44,6 +40,7 @@ import {
   type PlateLookupResponse,
 } from '../api/client';
 import { StickerCard } from './StickerCard';
+import { PaymentPanel } from './PaymentPanel';
 
 interface UnderwritingWizardProps {
   mode: 'BROKER' | 'CLIENT_APP';
@@ -163,8 +160,6 @@ export function UnderwritingWizard({
   const [ownerConfirmed, setOwnerConfirmed] = useState(true);
   const [proposalAccepted, setProposalAccepted] = useState(false);
   const [proposalSigner, setProposalSigner] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('MOBILE_MONEY');
-  const [copiedWhatsapp, setCopiedWhatsapp] = useState(false);
 
   // Focus step heading on step change (Modern Web Guidance §11)
   useEffect(() => {
@@ -567,40 +562,6 @@ export function UnderwritingWizard({
     }
   };
 
-  // Initiate Payment Control Number
-  const handleInitiatePayment = async () => {
-    if (!quote) return;
-    setActionBusy(true);
-    setActionError(null);
-    try {
-      const res = await api.initiatePayment(quote.id, paymentMethod, kycPhone);
-      setQuote(res.quote);
-      setStatusNotice(`Control Number ${res.payment.controlNumber} generated. Awaiting authoritative confirmation.`);
-    } catch (err) {
-      setActionError((err as Error).message);
-    } finally {
-      setActionBusy(false);
-    }
-  };
-
-  // Simulate Authoritative Payment Webhook
-  const handleSimulatePayment = async (
-    controlNumber: string,
-    state: 'CONFIRMED' | 'REVERSED' | 'UNAVAILABLE' | 'PENDING',
-  ) => {
-    setActionBusy(true);
-    setActionError(null);
-    try {
-      const res = await api.simulatePayment(controlNumber, state);
-      setQuote(res.quote);
-      setStatusNotice(`Payment gateway webhook received: ${state}.`);
-    } catch (err) {
-      setActionError((err as Error).message);
-    } finally {
-      setActionBusy(false);
-    }
-  };
-
   // Submit to TIRA MIS & Issue Cover Note
   const handleBindTira = async () => {
     if (!quote) return;
@@ -637,7 +598,6 @@ export function UnderwritingWizard({
 
   const mins = Math.floor(elapsedSec / 60);
   const secs = String(elapsedSec % 60).padStart(2, '0');
-  const latestPayment = quote?.payments[0];
 
   return (
     <div className="space-y-6">
@@ -2272,169 +2232,19 @@ export function UnderwritingWizard({
                 )}
               </div>
 
-              {/* Payment Method Selector */}
-              <fieldset>
-                <legend className="mb-2 text-sm font-bold text-slate-900">
-                  Authoritative Payment Method
-                </legend>
-                <div className="grid grid-cols-1 gap-2">
-                  {(
-                    [
-                      {
-                        id: 'MOBILE_MONEY',
-                        label: 'Mobile Money (M-Pesa / Mixx / Airtel)',
-                        icon: CreditCard,
-                      },
-                      {
-                        id: 'CONTROL_NUMBER_BANK',
-                        label: 'Bank Deposit via Control Number (CRDB/NMB)',
-                        icon: Landmark,
-                      },
-                      { id: 'CARD', label: 'Visa / Mastercard', icon: CreditCard },
-                      ...(mode === 'BROKER'
-                        ? [
-                            {
-                              id: 'CORPORATE_CREDIT' as PaymentMethod,
-                              label: 'Insurer Approved Corporate Credit',
-                              icon: Building2,
-                            },
-                          ]
-                        : []),
-                    ] as const
-                  ).map((m) => (
-                    <label
-                      key={m.id}
-                      className={`flex cursor-pointer items-center gap-2.5 rounded-xl border p-3 text-xs font-semibold transition ${
-                        paymentMethod === m.id
-                          ? 'border-sky-600 bg-sky-50 text-sky-950'
-                          : 'border-slate-200 text-slate-700 hover:bg-slate-50'
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="payMethod"
-                        checked={paymentMethod === m.id}
-                        onChange={() => setPaymentMethod(m.id)}
-                        className="h-4 w-4"
-                      />
-                      <m.icon className="h-4 w-4 text-sky-600" aria-hidden="true" />
-                      {m.label}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              <button
-                type="button"
-                disabled={!quote.readiness.issueReady || actionBusy}
-                onClick={handleInitiatePayment}
-                className="inline-flex min-h-[50px] w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-5 py-3 text-sm font-bold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-              >
-                Generate Control Number · {formatTzs(quote.totalPayableTzs)}
-              </button>
-
-              {/* Active Payment Control Number & Sandbox Webhook Simulator (Scenario 7) */}
-              {latestPayment && (
-                <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Control Number
-                    </span>
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                        latestPayment.state === 'CONFIRMED'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : latestPayment.state === 'REVERSED' ||
-                              latestPayment.state === 'UNAVAILABLE'
-                            ? 'bg-rose-100 text-rose-800'
-                            : 'bg-amber-100 text-amber-800'
-                      }`}
-                    >
-                      {latestPayment.state}
-                    </span>
-                  </div>
-                  <div className="text-2xl font-extrabold tracking-wider text-slate-900 font-mono-code">
-                    {latestPayment.controlNumber}
-                  </div>
-                  <p className="text-xs text-slate-600">{latestPayment.instructions}</p>
-
-                  {mode === 'BROKER' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const msg = `CoverFlow Motor Insurance Quote ${quote.quoteNumber}: Pay ${formatTzs(quote.totalPayableTzs)} via M-Pesa/Mixx/Bank using Control Number ${latestPayment.controlNumber}.`;
-                        navigator.clipboard?.writeText(msg).catch(() => {});
-                        setCopiedWhatsapp(true);
-                        setTimeout(() => setCopiedWhatsapp(false), 2500);
-                      }}
-                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100"
-                    >
-                      <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-                      {copiedWhatsapp ? 'Copied WhatsApp Payment Message!' : 'Copy WhatsApp Payment Message for Client'}
-                    </button>
-                  )}
-
-                  {/* Clearly Labeled Sandbox Webhook Controls */}
-                  <div className="border-t border-slate-200 pt-3">
-                    <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                      Sandbox Payment Gateway Webhook Simulator
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() =>
-                          handleSimulatePayment(latestPayment.controlNumber, 'CONFIRMED')
-                        }
-                        className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"
-                      >
-                        ✓ Confirm Payment
-                      </button>
-                      <button
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() => handleSimulatePayment(latestPayment.controlNumber, 'REVERSED')}
-                        className="rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50"
-                      >
-                        Simulate Reversed
-                      </button>
-                      <button
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() =>
-                          handleSimulatePayment(latestPayment.controlNumber, 'UNAVAILABLE')
-                        }
-                        className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-50"
-                      >
-                        Simulate Unavailable
-                      </button>
-                      <button
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() => handleSimulatePayment(latestPayment.controlNumber, 'PENDING')}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                      >
-                        Reset Pending
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Final Bind Button — strictly gated on authoritative payment CONFIRMED */}
-              <button
-                type="button"
-                disabled={latestPayment?.state !== 'CONFIRMED' || actionBusy}
-                onClick={handleBindTira}
-                className="inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-extrabold text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
-              >
-                {actionBusy ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Shield className="h-4 w-4" aria-hidden="true" />
-                )}
-                Submit to TIRA MIS & Issue Cover Note
-              </button>
+              <PaymentPanel
+                mode={mode}
+                quote={quote}
+                defaultPhone={kycPhone}
+                actionBusy={actionBusy}
+                onQuoteUpdated={(updatedQuote, notice) => {
+                  setQuote(updatedQuote);
+                  setActionError(null);
+                  setStatusNotice(notice);
+                }}
+                onError={(msg) => setActionError(msg)}
+                onBindTira={handleBindTira}
+              />
             </div>
           </aside>
         </section>

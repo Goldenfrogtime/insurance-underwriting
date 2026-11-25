@@ -55,6 +55,7 @@ export type PaymentState = z.infer<typeof PaymentStateSchema>;
 
 export const PaymentMethodSchema = z.enum([
   'MOBILE_MONEY',
+  'DIRECT_BANK_DEPOSIT',
   'CONTROL_NUMBER_BANK',
   'CARD',
   'CORPORATE_CREDIT',

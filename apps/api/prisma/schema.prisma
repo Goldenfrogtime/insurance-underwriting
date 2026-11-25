@@ -166,22 +166,27 @@ model PreCoverPhoto {
 }
 
 model PaymentTransaction {
-  id                String    @id @default(cuid())
-  quoteId           String
-  quote             Quote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  controlNumber     String    @unique
-  providerReference String
-  method            String    // MOBILE_MONEY | CONTROL_NUMBER_BANK | CARD | CORPORATE_CREDIT
-  amountTzs         Int
-  payerPhone        String?
-  state             String    @default("PENDING") // PaymentState
-  instructions      String
-  providerReceiptNo String?
-  statusMessage     String?
-  clearedAt         DateTime?
-  expiresAt         DateTime
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id                 String    @id @default(cuid())
+  quoteId            String
+  quote              Quote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  controlNumber      String    @unique
+  providerReference  String
+  method             String    // MOBILE_MONEY | DIRECT_BANK_DEPOSIT | CONTROL_NUMBER_BANK | CARD | CORPORATE_CREDIT
+  mobileNetwork      String?   // MPESA | MIXX_YAS | AIRTEL_MONEY | HALOPESA
+  bankName           String?
+  depositorReference String?
+  proofFileName      String?
+  proofDataUrl       String?
+  amountTzs          Int
+  payerPhone         String?
+  state              String    @default("PENDING") // PaymentState
+  instructions       String
+  providerReceiptNo  String?
+  statusMessage      String?
+  clearedAt          DateTime?
+  expiresAt          DateTime
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }
 
 model Policy {
