@@ -119,6 +119,8 @@ export function calculateMotorPremium(input: RatingInput): RatingCalculationResu
         brokerCommissionTzs: 0,
         vatOnCommissionPct: VAT_RATE_PCT,
         vatOnCommissionTzs: 0,
+        totalCommissionReceivableTzs: 0,
+        grossPayableToInsurerTzs: 0,
         insurerSettlementTzs: 0,
       },
       calculatedAt: nowIso,
@@ -539,12 +541,15 @@ export function calculateMotorPremium(input: RatingInput): RatingCalculationResu
 
   const totalPayableTzs = netPremiumBeforeTaxTzs + vatAmountTzs;
 
-  // 7. Broker Commission & Insurer Settlement (separate view, never customer discount)
+  // 7. Broker Commission Receivable (TIRA Cash-and-Carry: 100% gross paid to insurer;
+  //    broker invoices insurer separately for commission + 18% VAT on commission)
   const brokerCommissionTzs = roundTzs(
     (netPremiumBeforeTaxTzs * insurer.commissionRatePct) / 100,
   );
   const vatOnCommissionTzs = roundTzs((brokerCommissionTzs * VAT_RATE_PCT) / 100);
-  const insurerSettlementTzs = totalPayableTzs - brokerCommissionTzs - vatOnCommissionTzs;
+  const totalCommissionReceivableTzs = brokerCommissionTzs + vatOnCommissionTzs;
+  const grossPayableToInsurerTzs = totalPayableTzs;
+  const insurerSettlementTzs = totalPayableTzs - totalCommissionReceivableTzs;
 
   return {
     priceable: true,
@@ -572,6 +577,8 @@ export function calculateMotorPremium(input: RatingInput): RatingCalculationResu
       brokerCommissionTzs,
       vatOnCommissionPct: VAT_RATE_PCT,
       vatOnCommissionTzs,
+      totalCommissionReceivableTzs,
+      grossPayableToInsurerTzs,
       insurerSettlementTzs,
     },
     calculatedAt: nowIso,

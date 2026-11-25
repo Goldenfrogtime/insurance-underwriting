@@ -95,7 +95,7 @@ export async function generateQuoteDocumentPdf(params: {
     quotation: 'MOTOR INSURANCE QUOTATION',
     proforma: 'PROFORMA INVOICE',
     proposal: 'MOTOR INSURANCE PROPOSAL & AML/CFT DECLARATION',
-    'debit-note': 'BROKER DEBIT NOTE & SETTLEMENT ADVICE',
+    'debit-note': 'BROKER DEBIT NOTE & COMMISSION ADVICE',
   };
 
   return new Promise((resolve, reject) => {
@@ -280,14 +280,27 @@ export async function generateQuoteDocumentPdf(params: {
     doc.text(tzs(quote.totalPayableTzs), 430, y + 48, { align: 'right', width: 108 });
 
     if (docType === 'debit-note') {
-      doc.rect(45, y, 255, 76).fillAndStroke('#FFFBEB', '#FDE68A');
-      doc.fontSize(9).font('Helvetica-Bold').fillColor('#92400E').text('BROKER ACCOUNTING (INTERNAL)', 56, y + 10);
-      doc.font('Helvetica').fillColor('#78350F');
-      doc.text(`Broker Commission (12.5%): ${tzs(quote.totalBrokerCommissionTzs)}`, 56, y + 26);
-      doc.text(`VAT on Commission (18%): ${tzs(quote.totalVatOnCommissionTzs)}`, 56, y + 40);
+      const totalCommissionReceivable =
+        quote.totalBrokerCommissionTzs + quote.totalVatOnCommissionTzs;
+      doc.rect(45, y, 255, 86).fillAndStroke('#FFFBEB', '#FDE68A');
+      doc
+        .fontSize(8.5)
+        .font('Helvetica-Bold')
+        .fillColor('#92400E')
+        .text('BROKER COMMISSION RECEIVABLE (INTERNAL)', 56, y + 9);
+      doc.fontSize(8.5).font('Helvetica').fillColor('#78350F');
+      doc.text(`Gross Payable to Insurer (100%): ${tzs(quote.totalPayableTzs)}`, 56, y + 23);
+      doc.text(`Broker Commission (12.5%): ${tzs(quote.totalBrokerCommissionTzs)}`, 56, y + 36);
+      doc.text(`VAT on Commission (18%): ${tzs(quote.totalVatOnCommissionTzs)}`, 56, y + 49);
       doc
         .font('Helvetica-Bold')
-        .text(`Net Insurer Settlement: ${tzs(quote.totalInsurerSettlementTzs)}`, 56, y + 54);
+        .fillColor('#065F46')
+        .text(`Total Commission Receivable: ${tzs(totalCommissionReceivable)}`, 56, y + 63);
+      doc
+        .fontSize(7)
+        .font('Helvetica-Oblique')
+        .fillColor('#92400E')
+        .text('100% gross paid to insurer; commission settled separately.', 56, y + 75);
     }
 
     y += 96;

@@ -1762,7 +1762,7 @@ export function UnderwritingWizard({
                     </div>
                   </div>
 
-                  {/* Broker-Only Private Commission & Settlement Drawer */}
+                  {/* Broker-Only Private Commission Receivable Drawer (TIRA Cash-and-Carry) */}
                   {mode === 'BROKER' && (
                     <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3.5">
                       <button
@@ -1773,7 +1773,7 @@ export function UnderwritingWizard({
                       >
                         <span className="flex items-center gap-1.5">
                           <Building2 className="h-3.5 w-3.5" aria-hidden="true" />
-                          Broker Commission & Settlement (Hidden from Client)
+                          Broker Commission Receivable (Hidden from Client)
                         </span>
                         {showBrokerDrawer ? (
                           <ChevronUp className="h-4 w-4" aria-hidden="true" />
@@ -1782,28 +1782,43 @@ export function UnderwritingWizard({
                         )}
                       </button>
                       {showBrokerDrawer && (
-                        <dl className="mt-2.5 space-y-1 border-t border-amber-200/70 pt-2.5 text-xs text-amber-950">
-                          <div className="flex justify-between">
-                            <dt>
-                              Broker Commission ({selectedComparison.calculation.commission.commissionRatePct}%):
-                            </dt>
-                            <dd className="font-mono-code font-bold">
-                              {formatTzs(selectedComparison.calculation.commission.brokerCommissionTzs)}
-                            </dd>
-                          </div>
-                          <div className="flex justify-between">
-                            <dt>VAT on Commission (18%):</dt>
-                            <dd className="font-mono-code font-semibold">
-                              {formatTzs(selectedComparison.calculation.commission.vatOnCommissionTzs)}
-                            </dd>
-                          </div>
-                          <div className="flex justify-between border-t border-amber-200 pt-1 font-bold">
-                            <dt>Net Insurer Settlement:</dt>
-                            <dd className="font-mono-code">
-                              {formatTzs(selectedComparison.calculation.commission.insurerSettlementTzs)}
-                            </dd>
-                          </div>
-                        </dl>
+                        <div className="mt-2.5 space-y-2 border-t border-amber-200/70 pt-2.5 text-xs text-amber-950">
+                          <dl className="space-y-1">
+                            <div className="flex justify-between">
+                              <dt>Gross Payable to Insurer (100%):</dt>
+                              <dd className="font-mono-code font-bold text-slate-900">
+                                {formatTzs(selectedComparison.calculation.totalPayableTzs)}
+                              </dd>
+                            </div>
+                            <div className="flex justify-between">
+                              <dt>
+                                Broker Commission ({selectedComparison.calculation.commission.commissionRatePct}%):
+                              </dt>
+                              <dd className="font-mono-code font-semibold">
+                                {formatTzs(selectedComparison.calculation.commission.brokerCommissionTzs)}
+                              </dd>
+                            </div>
+                            <div className="flex justify-between">
+                              <dt>VAT on Commission (18%):</dt>
+                              <dd className="font-mono-code font-semibold">
+                                {formatTzs(selectedComparison.calculation.commission.vatOnCommissionTzs)}
+                              </dd>
+                            </div>
+                            <div className="flex justify-between border-t border-amber-200 pt-1 font-bold text-emerald-900">
+                              <dt>Total Commission Receivable (from Insurer):</dt>
+                              <dd className="font-mono-code">
+                                {formatTzs(
+                                  selectedComparison.calculation.commission.brokerCommissionTzs +
+                                    selectedComparison.calculation.commission.vatOnCommissionTzs,
+                                )}
+                              </dd>
+                            </div>
+                          </dl>
+                          <p className="text-[10px] leading-snug text-amber-800">
+                            Under TIRA Cash-and-Carry, the client pays 100% gross premium directly
+                            to the insurer; the insurer settles broker commission separately.
+                          </p>
+                        </div>
                       )}
                     </div>
                   )}

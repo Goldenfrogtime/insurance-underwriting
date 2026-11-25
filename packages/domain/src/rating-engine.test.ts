@@ -26,6 +26,8 @@ describe('@coverflow/domain — Rating Engine & V1 Acceptance Scenarios', () => 
     expect(res200.totalPayableTzs).toBe(8_260_000);
     expect(res200.commission.brokerCommissionTzs).toBe(875_000);
     expect(res200.commission.vatOnCommissionTzs).toBe(157_500);
+    expect(res200.commission.totalCommissionReceivableTzs).toBe(1_032_500);
+    expect(res200.commission.grossPayableToInsurerTzs).toBe(8_260_000);
     expect(res200.commission.insurerSettlementTzs).toBe(7_227_500);
 
     const res50 = calculateMotorPremium({
@@ -42,6 +44,8 @@ describe('@coverflow/domain — Rating Engine & V1 Acceptance Scenarios', () => 
     expect(res50.totalPayableTzs).toBe(2_065_000);
     expect(res50.commission.brokerCommissionTzs).toBe(218_750);
     expect(res50.commission.vatOnCommissionTzs).toBe(39_375);
+    expect(res50.commission.totalCommissionReceivableTzs).toBe(258_125);
+    expect(res50.commission.grossPayableToInsurerTzs).toBe(2_065_000);
     expect(res50.commission.insurerSettlementTzs).toBe(1_806_875);
   });
 

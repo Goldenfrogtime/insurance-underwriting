@@ -233,6 +233,11 @@ export interface BrokerCommissionBreakdown {
   brokerCommissionTzs: number;
   vatOnCommissionPct: number;
   vatOnCommissionTzs: number;
+  /** Total commission invoiceable by broker from the insurer (commission + 18% VAT) */
+  totalCommissionReceivableTzs: number;
+  /** 100% gross premium paid directly to the insurer under TIRA Cash-and-Carry */
+  grossPayableToInsurerTzs: number;
+  /** Legacy/internal analytical figure (gross minus commission & VAT on commission) */
   insurerSettlementTzs: number;
 }
 
